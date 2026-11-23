@@ -1,0 +1,21 @@
+# data never goes in git
+data/
+*.duckdb
+*.duckdb.wal
+*.parquet
+*.csv
+!dbt/seeds/*.csv
+*.zip
+
+# secrets
+.env
+.env.*
+!.env.example
+
+# python / dbt
+.venv/
+__pycache__/
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
+.DS_Store

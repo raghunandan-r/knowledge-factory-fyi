@@ -1,0 +1,43 @@
+# Source configuration. Probed facts live in reports/api_probe.json (make probe).
+
+paths:
+  data_dir: data
+  raw_dir: data/raw          # downloaded files, one folder per release
+  warehouse: data/warehouse.duckdb
+  tmp_dir: data/tmp          # DuckDB spill directory
+
+duckdb:
+  memory_limit: 16GB         # half of a 32 GB machine
+  threads: 8
+
+http:
+  user_agent: knowledge-factory-fyi/0.1 (open-data research)
+  timeout_s: 120
+  retries: 5
+
+open_payments:
+  metastore_url: https://openpaymentsdata.cms.gov/api/1/metastore/schemas/dataset/items
+  datastore_url: https://openpaymentsdata.cms.gov/api/1/datastore/query
+  program_years: [2023, 2024, 2025]
+  file_types:
+    # catalog title suffix -> bronze table
+    general:   {title: "General Payment Data",   table: op_general}
+    research:  {title: "Research Payment Data",  table: op_research}
+    ownership: {title: "Ownership Payment Data", table: op_ownership}
+  delete_raw_after_load: false   # flip to true once the Phase 1 gate passes
+  expected:
+    max_page_size: 500
+
+nppes:
+  index_url: https://download.cms.gov/nppes/NPI_Files.html
+  base_url: https://download.cms.gov/nppes/
+  # zip member prefix -> bronze table; every table is keyed by npi
+  members:
+    npidata_pfile:   nppes_npidata
+    pl_pfile:        nppes_practice_location
+    othername_pfile: nppes_other_name
+    endpoint_pfile:  nppes_endpoint
+  delete_raw_after_load: false
+  expected:
+    api_max_limit: 200
+    api_skip_clamp: 1000

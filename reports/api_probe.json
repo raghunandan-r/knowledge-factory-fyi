@@ -1,0 +1,34 @@
+{
+  "open_payments": {
+    "probed_dataset": "2025 General Payment Data",
+    "release": "P06302026_06032026",
+    "modified": "2026-06-30",
+    "page_size_ok": true,
+    "page_size_over_rejected": true,
+    "rate_limit_headers": {},
+    "cache_control": "public, max-age=3596",
+    "releases_in_catalog": [
+      "P06302026_06032026"
+    ]
+  },
+  "nppes_api": {
+    "limit_201_returns": 200,
+    "skip_1000_eq_skip_1001": true,
+    "first_npis_by_skip": {
+      "999": [
+        "1992851679",
+        "1780461905"
+      ],
+      "1000": [
+        "1780461905",
+        "1871821728"
+      ],
+      "1001": [
+        "1780461905",
+        "1871821728"
+      ]
+    },
+    "rate_limit_headers": {}
+  },
+  "failures": []
+}

@@ -1,6 +1,6 @@
 .PHONY: setup probe sync sync-op sync-nppes sync-check verify test lint fmt check
 
-UV := uv run
+UV := PYTHONUNBUFFERED=1 uv run  # stream progress into logs as it happens
 
 setup:            ## install pinned deps into .venv (Python 3.12)
 	uv sync --all-extras

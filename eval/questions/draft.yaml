@@ -1,0 +1,691 @@
+# DRAFT eval questions. Not frozen yet.
+#
+# Status: candidates only. Before the eval-v1 tag:
+#   1. Write eval/gold_sql/qNNN.sql for each question, against BRONZE.
+#   2. Resolve every `verify:` item against the loaded data.
+#   3. Split into dev.yaml (30) and holdout.yaml (20). The curator must never read holdout.yaml.
+#   4. Ideally, have one domain expert review a sample of ~15 questions.
+#
+# Field guide
+#   split        dev | holdout. Stratified so every trap tag has 2+ held-out questions.
+#   persona      compliance | journalist | policy | coi (hospital conflict-of-interest) | market (market access)
+#   difficulty   lookup | filtered | multistep | adversarial
+#   traps        first tag = primary (used for stratification); see PLAN.md §4
+#   answer       shape the agent must return; the grader compares against gold SQL output
+#   expert_note  the definition the gold answer uses, and why. This is what makes the answer
+#                key defensible; agents never see it.
+#   sources      general | research | ownership | nppes | seed:<name>
+#
+# Conventions used by every expert_note unless stated otherwise
+#   - "Physicians" = Covered_Recipient_Type 'Covered Recipient Physician'. NPPs and
+#     teaching hospitals are excluded.
+#   - "Payments" (count) = records, which is what CMS's published payment counts use.
+#   - Companies are grouped by Applicable_Manufacturer_or_Applicable_GPO_Making_Payment_ID,
+#     not by name.
+#   - A person is identified by Covered_Recipient_Profile_ID (NPI can be blank).
+#   - Program year (PY) = Program_Year, not Date_of_Payment, unless the question names dates.
+#   - Only the latest publication of each program year counts.
+
+questions:
+
+# ── GRAIN: records vs individual payments vs distinct recipients ─────────────
+- id: q001
+  split: dev
+  persona: compliance
+  difficulty: filtered
+  traps: [GRAIN, ENTITY]
+  question: >-
+    How many general payment records did Novo Nordisk report to physicians in PY2025,
+    and how many distinct physicians received at least one?
+  answer: {records: int, distinct_physicians: int}
+  expert_note: >-
+    Two different counts. Novo Nordisk = its making-payment ID(s) as listed in
+    seed:manufacturer_family. A physician who received 40 records counts once.
+  sources: [general, seed:manufacturer_family]
+
+- id: q002
+  split: dev
+  persona: policy
+  difficulty: filtered
+  traps: [GRAIN]
+  question: >-
+    What was the median total general payment per physician in PY2024, among physicians
+    who received anything?
+  answer: {usd: number}
+  expert_note: >-
+    Add up each physician's total first, then take the median across physicians.
+    The median of individual records is a different (and wrong) answer.
+  sources: [general]
+
+- id: q003
+  split: dev
+  persona: journalist
+  difficulty: multistep
+  traps: [GRAIN]
+  question: >-
+    What share of all PY2025 general payment dollars to physicians went to the top 1% of
+    physicians by total amount received?
+  answer: {percent: number}
+  expert_note: >-
+    Rank physicians by their total. Top 1% = ceil(0.01 × number of paid physicians).
+    Dollars = their sum ÷ the total to all paid physicians.
+  sources: [general]
+
+- id: q004
+  split: dev
+  persona: compliance
+  difficulty: filtered
+  traps: [GRAIN]
+  question: >-
+    What was the average value of a single food and beverage transfer to a physician in PY2024?
+  answer: {usd: number}
+  expert_note: >-
+    One record can bundle several transfers (Number_of_Payments_Included_in_Total_Amount).
+    Average per transfer = sum(amount) ÷ sum(number of payments), not the average record amount.
+  sources: [general]
+
+- id: q005
+  split: holdout
+  persona: policy
+  difficulty: filtered
+  traps: [GRAIN, RTYPE, TAXON]
+  question: >-
+    How many distinct nurse practitioners received at least one general payment in PY2025?
+  answer: {count: int}
+  expert_note: >-
+    NPP records cover several professions. Nurse practitioners are identified by primary
+    type (Covered_Recipient_Primary_Type_1). Count distinct profile IDs.
+  verify: [exact primary-type label for nurse practitioners in PY2025 data]
+  sources: [general]
+
+- id: q006
+  split: holdout
+  persona: journalist
+  difficulty: filtered
+  traps: [GRAIN]
+  question: >-
+    What was the average total general payment per physician who received payments,
+    for each of PY2023, PY2024 and PY2025?
+  answer: {table: [{program_year: int, usd: number}]}
+  expert_note: >-
+    Per year: total dollars ÷ distinct paid physicians. Average per record is wrong.
+  sources: [general]
+
+# ── REPUB: republication, Change_Type, latest-publication-only ───────────────
+- id: q007
+  split: dev
+  persona: compliance
+  difficulty: filtered
+  traps: [REPUB]
+  question: >-
+    How many PY2024 general payment records were changed or added in the current publication,
+    compared with the previous one?
+  answer: {changed: int, added: int}
+  expert_note: >-
+    Uses Change_Type in the current publication. The dictionary enum is NEW/ADD/CHANGED/UNCHANGED,
+    while the description text says "ADDED". Gold SQL uses the enum values.
+  verify: [CMS definition of NEW vs ADD in the methodology document]
+  sources: [general]
+
+- id: q008
+  split: dev
+  persona: policy
+  difficulty: lookup
+  traps: [REPUB, RTYPE]
+  question: >-
+    What is the total value of PY2023 general payments to physicians, as currently published?
+  answer: {usd: number}
+  expert_note: >-
+    Latest publication only. If bronze holds more than one publication of PY2023, keep the
+    latest version of each Record_ID. Must match the CMS national summary row.
+  sources: [general]
+
+- id: q009
+  split: dev
+  persona: journalist
+  difficulty: adversarial
+  traps: [REPUB]
+  question: >-
+    By how much did reported PY2023 general payments to physicians change between their first
+    publication and the current publication?
+  answer: {usd_first: number, usd_current: number, usd_change: number}
+  expert_note: >-
+    Needs the archived first-publication file for PY2023 loaded alongside the current one.
+  verify: [archived PY2023 first-publication file is downloadable; drop or replace this question if not]
+  sources: [general]
+
+- id: q010
+  split: holdout
+  persona: compliance
+  difficulty: filtered
+  traps: [REPUB]
+  question: >-
+    What dollar value of PY2024 general payments is in records marked as changed in the
+    current publication?
+  answer: {usd: number}
+  expert_note: Change_Type = 'CHANGED' in the current publication, all recipient types.
+  sources: [general]
+
+- id: q011
+  split: holdout
+  persona: policy
+  difficulty: filtered
+  traps: [REPUB, RTYPE]
+  question: >-
+    What were total general payments to physicians in each program year from 2023 to 2025,
+    as currently published?
+  answer: {table: [{program_year: int, usd: number}]}
+  expert_note: >-
+    Latest publication of each year only; summing across loaded publications double-counts.
+    Each row must match the CMS national summary.
+  sources: [general]
+
+# ── WIDE: products 1–5 and specialties 1–6 stored as columns ────────────────
+- id: q012
+  split: dev
+  persona: journalist
+  difficulty: filtered
+  traps: [WIDE]
+  question: >-
+    What was the total value of PY2024 general payments associated with Ozempic?
+  answer: {usd: number}
+  expert_note: >-
+    A product can appear in any of the 5 product-name columns. A record counts in full if any
+    slot matches 'OZEMPIC' (case-insensitive); CMS doesn't split amounts across products.
+  sources: [general]
+
+- id: q013
+  split: dev
+  persona: market
+  difficulty: multistep
+  traps: [WIDE, ENTITY]
+  question: >-
+    Which 10 drugs or biologicals had the highest total PY2025 general payments associated with them?
+  answer: {ranked: [{product: str, usd: number}], k: 10}
+  expert_note: >-
+    Unpivot all 5 slots and keep only slots indicated as Drug or Biological. A record counts in
+    full toward every product it lists, so the products sum to more than the total. Product
+    names are upper-cased and trimmed.
+  sources: [general]
+
+- id: q014
+  split: dev
+  persona: coi
+  difficulty: filtered
+  traps: [WIDE]
+  question: >-
+    How many PY2025 general payment records list more than one product?
+  answer: {count: int}
+  expert_note: Count records with a non-empty product name in slot 2 or later.
+  sources: [general]
+
+- id: q015
+  split: holdout
+  persona: journalist
+  difficulty: filtered
+  traps: [WIDE, ENTITY]
+  question: >-
+    What was the total value of PY2025 general payments associated with tirzepatide
+    (Mounjaro or Zepbound)?
+  answer: {usd: number}
+  expert_note: >-
+    Match either brand in any slot. A record listing both brands counts once.
+  sources: [general]
+
+- id: q016
+  split: holdout
+  persona: market
+  difficulty: multistep
+  traps: [WIDE]
+  question: >-
+    Which medical device had the highest total associated general payments in PY2024, and how much?
+  answer: {product: str, usd: number}
+  expert_note: >-
+    Unpivot the slots and keep only those whose indicator says Device. A record counts in full
+    toward each device it lists.
+  verify: [exact indicator value for devices, e.g. 'Device' vs 'Medical Supply']
+  sources: [general]
+
+- id: q017
+  split: holdout
+  persona: policy
+  difficulty: filtered
+  traps: [WIDE, TAXON]
+  question: >-
+    How many physicians who received PY2025 general payments are listed with more than one specialty?
+  answer: {count: int}
+  expert_note: >-
+    Count distinct physicians with any non-empty Covered_Recipient_Specialty_2..6 on any of
+    their records.
+  sources: [general]
+
+# ── RTYPE: physicians vs NPPs vs teaching hospitals ──────────────────────────
+- id: q018
+  split: dev
+  persona: policy
+  difficulty: filtered
+  traps: [RTYPE]
+  question: >-
+    What share of PY2025 general payment dollars to individual clinicians went to
+    non-physician practitioners?
+  answer: {percent: number}
+  expert_note: >-
+    Individual clinicians = physicians + NPPs, so teaching hospitals are excluded. Can be checked
+    against the CMS national summary.
+  sources: [general]
+
+- id: q019
+  split: dev
+  persona: journalist
+  difficulty: filtered
+  traps: [RTYPE]
+  question: >-
+    How much did teaching hospitals receive in general payments in PY2024, and which hospital
+    received the most?
+  answer: {usd_total: number, top_hospital: str, top_usd: number}
+  expert_note: Group by Teaching_Hospital_ID; report the hospital by its name.
+  sources: [general]
+
+- id: q020
+  split: dev
+  persona: policy
+  difficulty: filtered
+  traps: [RTYPE, TAXON]
+  question: >-
+    How did general payment dollars to physician assistants compare with nurse practitioners
+    in PY2023 and PY2025?
+  answer: {table: [{program_year: int, pa_usd: number, np_usd: number}]}
+  expert_note: Professions are identified by primary type, as in q005.
+  sources: [general]
+
+- id: q021
+  split: holdout
+  persona: compliance
+  difficulty: adversarial
+  traps: [RTYPE]
+  question: >-
+    What were total PY2025 general payments to all covered recipients?
+  answer: {usd: number}
+  expert_note: >-
+    "All covered recipients" includes teaching hospitals, which the CMS national summary leaves
+    out. Correct answer = physicians + NPPs + teaching hospitals.
+  sources: [general]
+
+- id: q022
+  split: holdout
+  persona: coi
+  difficulty: multistep
+  traps: [RTYPE, FILES]
+  question: >-
+    How many distinct teaching hospitals received any general or research payment in PY2025?
+  answer: {count: int}
+  expert_note: >-
+    Take the union of Teaching_Hospital_ID from both files. The research file includes hospitals
+    paid as the institution on a study.
+  sources: [general, research]
+
+# ── FILES: General vs Research vs Ownership ──────────────────────────────────
+- id: q023
+  split: dev
+  persona: journalist
+  difficulty: lookup
+  traps: [FILES]
+  question: >-
+    What was the total value of research payments in PY2025?
+  answer: {usd: number}
+  expert_note: >-
+    All records in the research file: direct payments, plus funding to institutions and other
+    entities where a covered recipient is principal investigator. This differs from the CMS
+    summary's direct-to-clinician research figure ($63.1M for PY2025).
+  sources: [research]
+
+- id: q024
+  split: dev
+  persona: policy
+  difficulty: multistep
+  traps: [FILES, GRAIN]
+  question: >-
+    In PY2025, how much research money was paid directly to physicians, and how much was
+    associated with physicians as principal investigators?
+  answer: {direct_usd: number, as_pi_usd: number}
+  expert_note: >-
+    Direct = the covered recipient is a physician. As PI = records where any of principal
+    investigators 1–5 is a physician and the recipient is not. The full record amount counts
+    once per record, not once per investigator.
+  sources: [research]
+
+- id: q025
+  split: dev
+  persona: journalist
+  difficulty: multistep
+  traps: [FILES, ENTITY]
+  question: >-
+    Which company made the largest combined total of general and research payments in PY2024?
+  answer: {company: str, usd: number}
+  expert_note: Sum both files per making-payment ID. Ownership is excluded.
+  sources: [general, research]
+
+- id: q026
+  split: dev
+  persona: compliance
+  difficulty: filtered
+  traps: [FILES]
+  question: >-
+    How many physicians held an ownership or investment interest reported in PY2025, and what
+    was the total value of those interests?
+  answer: {physicians: int, usd: number}
+  expert_note: >-
+    The ownership file covers physicians only. Value = Value_of_Interest (current value), not
+    Total_Amount_Invested.
+  sources: [ownership]
+
+- id: q027
+  split: holdout
+  persona: journalist
+  difficulty: multistep
+  traps: [FILES, ENTITY]
+  question: >-
+    How many distinct physicians appear anywhere in PY2025 Open Payments: as a general payment
+    recipient, a research recipient or principal investigator, or an ownership holder?
+  answer: {count: int}
+  expert_note: >-
+    Union of profile IDs across the three files, including PI profile IDs 1–5. Ownership uses
+    Physician_Profile_ID.
+  sources: [general, research, ownership]
+
+- id: q028
+  split: holdout
+  persona: policy
+  difficulty: filtered
+  traps: [FILES]
+  question: >-
+    What share of PY2024 research dollars went to preclinical research?
+  answer: {percent: number}
+  expert_note: Uses Preclinical_Research_Indicator across all research records.
+  sources: [research]
+
+# ── ENTITY: company and person identity ──────────────────────────────────────
+- id: q029
+  split: dev
+  persona: market
+  difficulty: filtered
+  traps: [ENTITY]
+  question: >-
+    Which 5 companies made the most PY2025 general payments to physicians?
+  answer: {ranked: [{company: str, usd: number}], k: 5}
+  expert_note: >-
+    Group by making-payment ID and show the most frequent name for each ID. Grouping by name
+    splits companies.
+  sources: [general]
+
+- id: q030
+  split: dev
+  persona: journalist
+  difficulty: multistep
+  traps: [ENTITY]
+  question: >-
+    How much did Johnson & Johnson companies pay physicians in general payments in PY2024?
+  answer: {usd: number}
+  expert_note: >-
+    The corporate family is a fixed list in seed:manufacturer_family (Janssen, DePuy Synthes,
+    Ethicon, Biosense Webster, etc.), committed with the eval. Name matching on "Johnson"
+    misses most of the family.
+  verify: [build the family list from the making-payment IDs present in PY2024]
+  sources: [general, seed:manufacturer_family]
+
+- id: q031
+  split: dev
+  persona: compliance
+  difficulty: filtered
+  traps: [ENTITY]
+  question: >-
+    How many distinct companies reported general payments in PY2025, and how many distinct
+    company names appear?
+  answer: {companies: int, names: int}
+  expert_note: Companies = distinct making-payment IDs. Names = distinct raw name strings.
+  sources: [general]
+
+- id: q032
+  split: holdout
+  persona: market
+  difficulty: filtered
+  traps: [ENTITY]
+  question: >-
+    Rank AbbVie, Pfizer, Eli Lilly, Novo Nordisk and Merck by PY2025 general payments to physicians.
+  answer: {ranked: [{company: str, usd: number}], k: 5}
+  expert_note: >-
+    Each company = its making-payment IDs in seed:manufacturer_family. "Merck" means Merck Sharp
+    & Dohme (US), not Merck KGaA / EMD Serono.
+  sources: [general, seed:manufacturer_family]
+
+- id: q033
+  split: holdout
+  persona: journalist
+  difficulty: filtered
+  traps: [ENTITY, GRAIN]
+  question: >-
+    Which physician received the most PY2025 general payments from Intuitive Surgical, and how much?
+  answer: {npi: str, usd: number}
+  expert_note: >-
+    Aggregate by profile ID, then report that physician's NPI. Grading is by NPI, not name.
+  sources: [general]
+
+- id: q034
+  split: holdout
+  persona: policy
+  difficulty: multistep
+  traps: [ENTITY, GRAIN]
+  question: >-
+    How many physicians received general payments from more than 10 different companies in PY2025?
+  answer: {count: int}
+  expert_note: Count distinct making-payment IDs per physician profile ID.
+  sources: [general]
+
+# ── TIME: program year vs payment date; dispute/delay flags ──────────────────
+- id: q035
+  split: dev
+  persona: journalist
+  difficulty: filtered
+  traps: [TIME]
+  question: >-
+    Which month of 2024 had the highest total general payment dollars to physicians?
+  answer: {month: str, usd: number}
+  expert_note: Group by month of Date_of_Payment within PY2024.
+  sources: [general]
+
+- id: q036
+  split: dev
+  persona: compliance
+  difficulty: filtered
+  traps: [TIME]
+  question: >-
+    How many PY2025 general payment records are currently marked as disputed, and what is their
+    total value?
+  answer: {records: int, usd: number}
+  expert_note: Dispute_Status_for_Publication = 'Yes' in the current publication.
+  sources: [general]
+
+- id: q037
+  split: dev
+  persona: policy
+  difficulty: filtered
+  traps: [TIME]
+  question: >-
+    How did total food and beverage payments to physicians change from PY2023 to PY2025?
+  answer: {usd_2023: number, usd_2025: number, percent_change: number}
+  expert_note: Nature_of_Payment = 'Food and Beverage', grouped by program year.
+  sources: [general]
+
+- id: q038
+  split: holdout
+  persona: compliance
+  difficulty: lookup
+  traps: [TIME, FILES]
+  question: >-
+    How many PY2025 research payment records had their publication delayed?
+  answer: {count: int}
+  expert_note: Delay_in_Publication_Indicator = 'Yes'.
+  sources: [research]
+
+- id: q039
+  split: holdout
+  persona: journalist
+  difficulty: filtered
+  traps: [TIME]
+  question: >-
+    What was the total value of general payments to physicians with a payment date in
+    October–December 2025?
+  answer: {usd: number}
+  expert_note: Filter on Date_of_Payment, not Program_Year.
+  sources: [general]
+
+# ── PAGE: questions where API paging or truncation breaks naive agents ──────
+- id: q040
+  split: dev
+  persona: journalist
+  difficulty: multistep
+  traps: [PAGE, GRAIN]
+  question: >-
+    How many physicians in California received more than $10,000 in total general payments in PY2025?
+  answer: {count: int}
+  expert_note: >-
+    Needs a per-physician total over millions of records. Through the API (500 rows per page)
+    this only works by using CMS's pre-aggregated "payments grouped by covered recipient"
+    dataset. State = Recipient_State.
+  sources: [general]
+
+- id: q041
+  split: dev
+  persona: policy
+  difficulty: multistep
+  traps: [PAGE, TAXON]
+  question: >-
+    How many active NPIs in NPPES have interventional cardiology as their primary taxonomy, and
+    how many of them received any PY2025 general payment?
+  answer: {npis: int, paid: int}
+  expert_note: >-
+    Primary taxonomy 207RI0011X, from the NPPES bulk file, excluding deactivated NPIs. The NPPES
+    API cannot return more than 1,200 results per query (skip stops at 1,000 without an error).
+  verify: [taxonomy code against current NUCC list]
+  sources: [nppes, general]
+
+- id: q042
+  split: dev
+  persona: coi
+  difficulty: filtered
+  traps: [PAGE, ENTITY]
+  question: >-
+    List every company that made a general payment to a physician in Vermont in PY2025, with
+    each company's total.
+  answer: {table: [{company: str, usd: number}]}
+  expert_note: >-
+    The full list is graded, so truncated pages fail. Grouped by making-payment ID.
+  sources: [general]
+
+- id: q043
+  split: holdout
+  persona: market
+  difficulty: filtered
+  traps: [PAGE, TAXON]
+  question: >-
+    How many dermatologists in Texas received any general payment in PY2024?
+  answer: {count: int}
+  expert_note: >-
+    Dermatology = a primary specialty under 'Allopathic & Osteopathic Physicians|Dermatology',
+    including its subspecialties. Recipient_State = 'TX'.
+  sources: [general]
+
+- id: q044
+  split: holdout
+  persona: journalist
+  difficulty: adversarial
+  traps: [PAGE, ENTITY]
+  question: >-
+    How many physicians with the last name Smith received any general payment in PY2025?
+  answer: {count: int}
+  expert_note: >-
+    Distinct profile IDs with last name 'SMITH' (case-insensitive, exact). Searching NPPES for
+    "Smith" returns at most 1,200 results with no warning.
+  sources: [general]
+
+# ── TAXON: specialty strings vs NPPES taxonomy codes ─────────────────────────
+- id: q045
+  split: dev
+  persona: market
+  difficulty: filtered
+  traps: [TAXON]
+  question: >-
+    What were total PY2025 general payments to cardiologists, including all cardiology subspecialties?
+  answer: {usd: number}
+  expert_note: >-
+    Primary specialty (Specialty_1) under 'Allopathic & Osteopathic Physicians|Internal Medicine|'
+    for cardiovascular disease and its subspecialties (interventional, electrophysiology,
+    advanced heart failure, etc.). The exact list is in seed:specialty_groups.
+  verify: [subspecialty strings present in PY2025]
+  sources: [general, seed:specialty_groups]
+
+- id: q046
+  split: dev
+  persona: policy
+  difficulty: multistep
+  traps: [TAXON, GRAIN]
+  question: >-
+    Which 10 specialties received the highest average general payments per paid physician in
+    PY2025, among specialties with at least 100 paid physicians?
+  answer: {ranked: [{specialty: str, usd_per_physician: number}], k: 10}
+  expert_note: >-
+    Specialty = the full Specialty_1 string. Average = dollars ÷ distinct paid physicians in
+    that specialty.
+  sources: [general]
+
+- id: q047
+  split: dev
+  persona: journalist
+  difficulty: filtered
+  traps: [TAXON]
+  question: >-
+    How much did orthopaedic surgeons receive in royalty or license payments in PY2024?
+  answer: {usd: number}
+  expert_note: >-
+    Orthopaedic surgery and its subspecialties, per seed:specialty_groups.
+    Nature_of_Payment = 'Royalty or License'.
+  sources: [general, seed:specialty_groups]
+
+- id: q048
+  split: dev
+  persona: coi
+  difficulty: multistep
+  traps: [TAXON, ENTITY]
+  question: >-
+    For physicians paid in PY2025, how often does the specialty in Open Payments disagree with
+    their primary taxonomy in NPPES?
+  answer: {percent: number}
+  expert_note: >-
+    Join on NPI. Map NPPES primary taxonomy codes to NUCC classification/specialization strings,
+    then compare with Specialty_1. Disagreement = different specialization; same classification
+    but blank specialization counts as agreement. The crosswalk is in seed:nucc_taxonomy.
+  sources: [general, nppes, seed:nucc_taxonomy]
+
+- id: q049
+  split: holdout
+  persona: market
+  difficulty: filtered
+  traps: [TAXON]
+  question: >-
+    What were total PY2025 general payments to oncologists (medical oncology and hematology/oncology)?
+  answer: {usd: number}
+  expert_note: Specialty group 'oncology_medical' in seed:specialty_groups.
+  sources: [general, seed:specialty_groups]
+
+- id: q050
+  split: holdout
+  persona: policy
+  difficulty: filtered
+  traps: [TAXON, GRAIN]
+  question: >-
+    What share of PY2024 general payment dollars to psychiatrists was for food and beverage?
+  answer: {percent: number}
+  expert_note: >-
+    Psychiatry per seed:specialty_groups (Psychiatry & Neurology|Psychiatry and its
+    subspecialties). Neurology is excluded.
+  sources: [general, seed:specialty_groups]

@@ -11,7 +11,21 @@
 | Watermarks, sync runs, schema registry | `ingest/watermark.py`, `ingest/common.py` |
 | Phase 1 gate checks | `ingest/verify.py` |
 | Why bulk files, per-release sync, all-text bronze | `docs/adr/0001-ingest-design.md` |
+| How does the CMS national summary get into bronze? | `ingest/sync_op_summary.py` |
+| Which CMS docs do agents get, and how are they fetched? | `ingest/fetch_docs.py`, `config/sources.yml` (`docs:`) |
 | Draft eval questions | `eval/questions/draft.yaml` |
-| Tests | `tests/test_ingest.py` |
+| Which questions are in the pilot? | `eval/pilot.yaml` |
+| Gold answers (SQL on bronze) | `eval/gold_sql/qNNN.sql` |
+| How is an answer graded? Gold SQL output convention? | `eval/grader.py` |
+| Starter semantic layer: models, metrics, profile | `dbt/models/`, `dbt/profiles.yml` |
+| Does a layer reconcile to CMS totals? | `dbt/tests/reconcile_national_summary.sql` |
+| Agent model, prompt, effort, limits | `config/agent.yml` |
+| The agent loop, arms and what each arm can see | `agents/harness.py`, `agents/tools.py` |
+| How an `answer:` shape becomes the submit schema | `agents/shapes.py` |
+| Running and scoring the pilot | `agents/pilot.py` → `reports/pilot.json` |
+| Token prices used for cost | `config/pricing.yml` |
+| Tests | `tests/` |
 
 Bronze tables live in `data/warehouse.duckdb` (schemas `bronze`, `meta`); query it read-only.
+Each semantic layer is built to `data/layers/<layer>.duckdb` (schemas `silver`, `gold`; no bronze).
+Run traces: `data/runs/<pilot_id>/<arm>/run<k>/`.

@@ -1,0 +1,41 @@
+# Run from the repo root (paths are relative to it) with DBT_PROFILES_DIR=dbt.
+#   KF_LAYER   which layer: data/layers/<KF_LAYER>.duckdb (default starter)
+#   KF_TARGET  build (default): write the layer, bronze attached read-only as `wh`
+#              query: open the layer read-only, no bronze (what mf and agents use)
+# The layer file is always attached under the alias `layer` (models set +database: layer),
+# so the semantic manifest names "layer"."gold"."..." whichever layer was built last.
+kf:
+  target: "{{ env_var('KF_TARGET', 'build') }}"
+  outputs:
+    build: &build
+      type: duckdb
+      path: ":memory:"
+      threads: 2
+      attach:
+        - path: "data/layers/{{ env_var('KF_LAYER', 'starter') }}.duckdb"
+          alias: layer
+        - path: data/warehouse.duckdb
+          alias: wh
+          read_only: true
+      settings: &settings
+        memory_limit: 16GB
+        threads: 8
+        temp_directory: data/tmp
+        preserve_insertion_order: false
+    starter:
+      <<: *build
+      attach:
+        - path: data/layers/starter.duckdb
+          alias: layer
+        - path: data/warehouse.duckdb
+          alias: wh
+          read_only: true
+    query:
+      type: duckdb
+      path: ":memory:"
+      threads: 1
+      attach:
+        - path: "data/layers/{{ env_var('KF_LAYER', 'starter') }}.duckdb"
+          alias: layer
+          read_only: true
+      settings: *settings

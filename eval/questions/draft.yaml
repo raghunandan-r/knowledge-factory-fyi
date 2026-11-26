@@ -489,7 +489,7 @@ questions:
   traps: [TIME]
   question: >-
     Which month of 2024 had the highest total general payment dollars to physicians?
-  answer: {month: str, usd: number}
+  answer: {month_number: int, usd: number}
   expert_note: Group by month of Date_of_Payment within PY2024.
   sources: [general]
 

@@ -1,0 +1,8 @@
+name: kf_fixture
+version: 1.0.0
+config-version: 2
+profile: kf_fixture
+model-paths: ["models"]
+models:
+  kf_fixture:
+    +materialized: table

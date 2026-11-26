@@ -1,0 +1,25 @@
+version: 2
+
+sources:
+  - name: bronze
+    database: wh
+    schema: bronze
+    description: >
+      Raw CMS files as loaded by ingest/ (data/warehouse.duckdb, attached read-only as `wh`
+      at build time only). Every column is text; each row carries _release, _source_file,
+      _file_sha256, _run_id and _ingested_at.
+    tables:
+      - name: op_general
+        description: Open Payments General Payments detail file (payments not made in connection with a research agreement), PY2023-2025.
+      - name: op_research
+        description: Open Payments Research Payments detail file (payments made in connection with a research agreement or protocol), PY2023-2025.
+      - name: op_ownership
+        description: Open Payments Physician Ownership or Investment Interest detail file, PY2023-2025.
+      - name: op_national_summary
+        description: CMS's own national totals per program year, payment type (General/Research) and recipient type (Physician/NPP). Used only to reconcile the layer.
+      - name: nppes_npidata
+        description: NPPES Data Dissemination (V.2) main NPI file, monthly full file plus weekly updates applied as upserts by NPI.
+      - name: partd_prescriber_drug
+        description: Medicare Part D Prescribers - by Provider and Drug, data years 2023-2024.
+      - name: partd_prescriber
+        description: Medicare Part D Prescribers - by Provider (one summary row per NPI per year), data years 2023-2024.

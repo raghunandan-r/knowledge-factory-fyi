@@ -1,0 +1,4 @@
+# Phase 2 feasibility pilot (PLAN.md §4): 12 dev drafts, at least one per trap, no REPUB.
+# None needs a seed, so the starter can't fail for lack of a list the eval owns.
+pilot_id: pilot-v1
+questions: [q002, q004, q012, q013, q018, q019, q024, q026, q029, q035, q046, q064]

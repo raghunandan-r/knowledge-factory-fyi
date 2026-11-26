@@ -214,6 +214,23 @@ Every question is tagged with the trap it targets, and the taxonomy uses the sam
   questions (§9). 14 went into the draft eval as q051–q064, adding the `SUPPR` trap. One is held
   back because it needs a clinical judgment seed. The draft pool is now 64; Phase 3 still picks
   30 dev and 20 held-out, and `SUPPR` needs at least 2 held-out questions like every trap.
+- 2026-11-26: Phase 2 build (pilot not yet run).
+  - **Pilot questions** (`eval/pilot.yaml`): q002, q004, q012, q013, q018, q019, q024, q026,
+    q029, q035, q046, q064. Every trap except `REPUB` is a primary tag at least once. None
+    needs a seed, so a wrong answer can't come from a list only the eval owns.
+  - **Gold checks against CMS:** q002 (median $173.11) and q024's direct research
+    ($62,512,736.88) equal the CMS national summary exactly.
+  - **Starter built by an isolated Claude subagent, not by me.** It was told to work from CMS
+    docs and the bronze schema only and never read `eval/`, this file or the README. That
+    keeps the trap list out of the starter better than I could. It took about 35 minutes, not
+    2 days. It reconciles exactly (12 of 12 cells, $0.00 off; CMS's payment count = records).
+  - **Grading names:** a company or hospital is graded by ID, so gold accepts any name string
+    that ID was reported under. The agent is told to report names as they appear in the data.
+  - **q035's answer shape** changed from `month: str` to `month_number: int` so the grader
+    doesn't have to parse month names.
+  - **Agent settings** (`config/agent.yml`): `claude-opus-5-5`, effort high, 30 turns, no
+    refusal fallback to another model (a refusal is recorded as wrong, never answered by a
+    different model).
 
 ## 9. Compliance and fraud-signal questions
 

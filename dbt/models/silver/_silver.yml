@@ -1,0 +1,55 @@
+version: 2
+
+# Typed copies of bronze. Open Payments models keep CMS's field names (see the Methodology
+# & Data Dictionary, Appendices B, D, F); money is DECIMAL(18,2), dates are DATE.
+
+models:
+  - name: op_general_payments
+    description: >
+      Open Payments General Payments detail, every CMS field, typed. Newest release per
+      program year. One row per Record_ID.
+    columns:
+      - name: record_id
+        description: System-assigned identifier of the general payment record.
+        data_tests: [unique, not_null]
+      - name: total_amount_of_payment_usdollars
+        description: U.S. dollar amount of the payment or other transfer of value, DECIMAL(18,2).
+        data_tests: [not_null]
+      - name: date_of_payment
+        description: Payment date (first payment date for a series), parsed from MM/DD/YYYY.
+      - name: program_year
+        description: Year in which the payment occurred, as reported.
+        data_tests: [not_null]
+  - name: op_research_payments
+    description: >
+      Open Payments Research Payments detail, every CMS field (including up to five principal
+      investigators and five products), typed. Newest release per program year.
+    columns:
+      - name: record_id
+        data_tests: [unique, not_null]
+      - name: total_amount_of_payment_usdollars
+        description: U.S. dollar amount of the research payment, DECIMAL(18,2).
+        data_tests: [not_null]
+  - name: op_ownership_interests
+    description: Open Payments Physician Ownership or Investment Interest detail, typed. Newest release per program year.
+    columns:
+      - name: record_id
+        data_tests: [unique, not_null]
+  - name: nppes_providers
+    description: >
+      One row per NPI from the NPPES main data file (latest version of each NPI after weekly
+      upserts), with renamed, typed core fields and the primary taxonomy picked out of the 15
+      taxonomy slots.
+    columns:
+      - name: npi
+        data_tests: [unique, not_null]
+  - name: nppes_provider_taxonomies
+    description: One row per NPI x filled taxonomy slot (1-15), with license number/state and the primary switch.
+  - name: partd_prescriber_drug
+    description: >
+      Medicare Part D Prescribers by Provider and Drug, typed, newest release per data year.
+      Suppressed values (1-10) are NULL; GE65 suppression flags kept as published.
+  - name: partd_prescribers
+    description: >
+      Medicare Part D Prescribers by Provider (summary per NPI per year), core utilization,
+      cost, brand/generic, opioid and antibiotic fields, typed.

@@ -1,0 +1,390 @@
+version: 2
+
+# NPPES: "NPPES Data Dissemination - Readme" and "Code Values" (data/docs/text/nppes_*.md).
+# Part D: "Medicare Part D Prescribers Datasets: A Methodological Overview", April 2026, and
+# the by-Provider-and-Drug / by-Provider data dictionaries (data/docs/text/partd_*.md).
+
+semantic_models:
+  - name: providers
+    description: >
+      NPPES (National Plan and Provider Enumeration System) registry: one row per National
+      Provider Identifier, individuals (entity type 1) and organizations (entity type 2), from
+      the monthly full file plus weekly updates. Use it to look up who an NPI is, where they
+      practice, their primary taxonomy, and whether the NPI is deactivated. Open Payments and
+      Part D facts join here through the `provider` entity.
+    model: ref('dim_providers')
+    defaults:
+      agg_time_dimension: enumeration_date
+    entities:
+      - name: provider
+        type: primary
+        expr: npi
+        description: NPI, the 10-digit National Provider Identifier.
+    dimensions:
+      - name: entity_type
+        type: categorical
+        description: >
+          'Individual' (entity type code 1) or 'Organization' (code 2). Blank for deactivated
+          NPIs whose details NPPES no longer disseminates.
+      - name: provider_name
+        type: categorical
+        description: Display name, first/middle/last/suffix for individuals or legal business name for organizations.
+      - name: last_name
+        type: categorical
+        description: Provider Last Name (Legal Name), individuals.
+      - name: first_name
+        type: categorical
+        description: Provider First Name, individuals.
+      - name: organization_name
+        type: categorical
+        description: Provider Organization Name (Legal Business Name), organizations.
+      - name: credential
+        type: categorical
+        description: Provider Credential Text as entered by the provider, e.g. 'MD', 'M.D.', 'NP'. Free text, not standardized.
+      - name: sex_code
+        type: categorical
+        description: Provider Sex Code (M, F, or X/U for undisclosed), individuals only.
+      - name: primary_taxonomy_code
+        type: categorical
+        description: >
+          Healthcare Provider Taxonomy Code flagged as primary (Primary Taxonomy Switch = 'Y');
+          falls back to taxonomy slot 1 when none is flagged. Codes follow the NUCC Health Care
+          Provider Taxonomy code set (e.g. 207RC0000X = Cardiovascular Disease); NPPES does not
+          ship descriptions. All taxonomies per NPI are in gold.bridge_provider_taxonomies.
+      - name: practice_city
+        type: categorical
+        description: City of the provider's primary business practice location.
+      - name: practice_state
+        type: categorical
+        description: State (two-letter code) of the primary business practice location.
+      - name: practice_zip5
+        type: categorical
+        description: First five digits of the primary practice location postal code.
+      - name: npi_status
+        type: categorical
+        description: >
+          'Deactivated' when the NPI has an NPI Deactivation Date and no later NPI Reactivation
+          Date; otherwise 'Active'. NPPES does not publish the deactivation reason.
+      - name: enumeration_date
+        type: time
+        type_params:
+          time_granularity: day
+        description: Provider Enumeration Date, when the NPI was assigned.
+      - name: deactivation_date
+        type: time
+        type_params:
+          time_granularity: day
+        description: NPI Deactivation Date, if the NPI was deactivated.
+      - name: reactivation_date
+        type: time
+        type_params:
+          time_granularity: day
+        description: NPI Reactivation Date, if a deactivated NPI was reactivated.
+      - name: last_update_date
+        type: time
+        type_params:
+          time_granularity: day
+        description: Last Update Date of the NPPES record.
+    measures:
+      - name: providers
+        agg: sum
+        expr: "1"
+        description: Number of NPIs in NPPES.
+
+  - name: partd_prescriber_drug
+    description: >
+      Medicare Part D Prescribers - by Provider and Drug: prescription drug events for
+      Medicare Part D beneficiaries (stand-alone PDP and Medicare Advantage drug plans),
+      aggregated per prescriber NPI, brand name and generic name, per calendar data year
+      (2023, 2024). Rows with fewer than 11 claims are excluded, so sums UNDERSTATE true Part D
+      totals; use partd_prescribers for complete per-prescriber totals. Over-the-counter drugs
+      are excluded. Costs are gross drug costs before manufacturer rebates.
+    model: ref('fct_partd_prescriber_drug')
+    defaults:
+      agg_time_dimension: data_year
+    entities:
+      - name: prescriber_drug
+        type: primary
+        expr: prescriber_drug_id
+        description: One prescriber x brand name x generic name x data year.
+      - name: provider
+        type: foreign
+        expr: npi
+        description: Prscrbr_NPI, the prescriber's NPI; joins to NPPES.
+    dimensions:
+      - name: data_year
+        type: time
+        expr: data_year_start
+        type_params:
+          time_granularity: year
+        description: Calendar year of the prescription drug events (January 1 of that year).
+      - name: brand_name
+        type: categorical
+        description: Brnd_Name, brand (trademarked) name of the drug filled; for generics this equals the generic name.
+      - name: generic_name
+        type: categorical
+        description: Gnrc_Name, USAN generic name (chemical ingredient), short version.
+      - name: prescriber_type
+        type: categorical
+        description: >
+          Prscrbr_Type, provider specialty derived from the Medicare specialty code on the NPI's
+          Part B claims (the code with the most services); otherwise mapped from the NPPES
+          taxonomy code. E.g. 'Internal Medicine', 'Nurse Practitioner'.
+      - name: prescriber_type_source
+        type: categorical
+        description: Prscrbr_Type_Src, where prescriber_type came from ('Claim-Specialty', 'NPPES-Specialty', 'NPPES-Taxonomy').
+      - name: prescriber_state
+        type: categorical
+        description: Prscrbr_State_Abrvtn, prescriber's state as reported in NPPES.
+      - name: prescriber_city
+        type: categorical
+        description: Prscrbr_City, prescriber's city as reported in NPPES.
+      - name: prescriber_last_org_name
+        type: categorical
+        description: Prescriber last name (individuals) or organization name.
+      - name: prescriber_first_name
+        type: categorical
+        description: Prescriber first name (blank for organizations).
+    measures:
+      - name: partd_claims
+        agg: sum
+        expr: total_claims
+        description: Tot_Clms, Medicare Part D claims including original prescriptions and refills.
+      - name: partd_30day_fills
+        agg: sum
+        expr: total_30day_fills
+        description: >
+          Tot_30day_Fills, standardized 30-day fills (days supplied / 30, each claim bottom-coded
+          at 1.0 and top-coded at 12.0).
+      - name: partd_day_supply
+        agg: sum
+        expr: total_day_supply
+        description: Tot_Day_Suply, total days' supply dispensed.
+      - name: partd_drug_cost
+        agg: sum
+        expr: total_drug_cost
+        description: >
+          Tot_Drug_Cst, aggregate drug cost paid for all claims: ingredient cost, dispensing
+          fee, sales tax and vaccine administration fees, paid by the plan, beneficiary,
+          government subsidies and other third parties. Not net of rebates.
+      - name: partd_drug_beneficiaries
+        agg: sum
+        expr: total_beneficiaries
+        description: >
+          Tot_Benes, unique beneficiaries with at least one claim for the drug from this
+          prescriber. Values 1-10 are suppressed (NULL). Summing across drugs or prescribers
+          double-counts people who appear in several rows.
+      - name: partd_prescribers_with_drug
+        agg: count_distinct
+        expr: npi
+        description: Distinct prescriber NPIs with at least one row.
+
+  - name: partd_prescribers
+    description: >
+      Medicare Part D Prescribers - by Provider: one summary row per prescriber NPI per data
+      year, aggregated over ALL of the prescriber's Part D claims (not limited to drugs with 11+
+      claims). Includes brand/generic splits, opioid, long-acting opioid and antibiotic
+      utilization, and beneficiary characteristics. Values 1-10 are suppressed (NULL).
+    model: ref('fct_partd_prescribers')
+    defaults:
+      agg_time_dimension: data_year
+    entities:
+      - name: prescriber_year
+        type: primary
+        expr: prescriber_year_id
+        description: One prescriber NPI x data year.
+      - name: provider
+        type: foreign
+        expr: npi
+        description: Prscrbr_NPI; joins to NPPES.
+    dimensions:
+      - name: data_year
+        type: time
+        expr: data_year_start
+        type_params:
+          time_granularity: year
+        description: Calendar year of the prescription drug events.
+      - name: prescriber_type
+        type: categorical
+        description: Prscrbr_Type, specialty from Part B claims or NPPES taxonomy.
+      - name: prescriber_entity_code
+        type: categorical
+        description: Prscrbr_Ent_Cd, 'I' individual or 'O' organization as registered in NPPES.
+      - name: prescriber_state
+        type: categorical
+        description: Prescriber's state as reported in NPPES.
+      - name: prescriber_city
+        type: categorical
+        description: Prescriber's city as reported in NPPES.
+      - name: prescriber_zip5
+        type: categorical
+        description: Prescriber's 5-digit ZIP code.
+      - name: prescriber_ruca_desc
+        type: categorical
+        description: Rural-Urban Commuting Area description for the prescriber's ZIP code.
+      - name: prescriber_credentials
+        type: categorical
+        description: Prescriber credentials from NPPES (individuals).
+    measures:
+      - name: partd_provider_claims
+        agg: sum
+        expr: total_claims
+        description: Tot_Clms, all Part D claims (including refills) for the prescriber.
+      - name: partd_provider_drug_cost
+        agg: sum
+        expr: total_drug_cost
+        description: Tot_Drug_Cst, aggregate drug cost for all the prescriber's claims (gross, before rebates).
+      - name: partd_provider_30day_fills
+        agg: sum
+        expr: total_30day_fills
+        description: Tot_30day_Fills for all the prescriber's claims.
+      - name: partd_provider_beneficiaries
+        agg: sum
+        expr: total_beneficiaries
+        description: >
+          Tot_Benes, unique beneficiaries per prescriber. Summing across prescribers
+          double-counts beneficiaries seen by more than one prescriber.
+      - name: partd_provider_brand_claims
+        agg: sum
+        expr: brand_claims
+        description: Brnd_Tot_Clms, claims for brand-name drugs (NULL when suppressed).
+      - name: partd_provider_generic_claims
+        agg: sum
+        expr: generic_claims
+        description: Gnrc_Tot_Clms, claims for generic drugs (NULL when suppressed).
+      - name: partd_provider_opioid_claims
+        agg: sum
+        expr: opioid_claims
+        description: Opioid_Tot_Clms, claims for opioid drugs (per the Part D Overutilization Monitoring System list).
+      - name: partd_provider_opioid_drug_cost
+        agg: sum
+        expr: opioid_drug_cost
+        description: Opioid_Tot_Drug_Cst, drug cost of opioid claims.
+      - name: partd_provider_antibiotic_claims
+        agg: sum
+        expr: antibiotic_claims
+        description: Antbtc_Tot_Clms, claims for antibiotics.
+      - name: partd_provider_count
+        agg: count_distinct
+        expr: npi
+        description: Distinct prescriber NPIs in the by-Provider file.
+
+metrics:
+  - name: provider_count
+    label: NPIs
+    description: Number of NPIs in NPPES. Filter by provider__npi_status or provider__entity_type as needed.
+    type: simple
+    type_params:
+      measure: providers
+  - name: partd_claims
+    label: Part D claims (by drug detail)
+    description: >
+      Part D claims including refills, from the by-Provider-and-Drug file. Understates true
+      totals because prescriber-drug rows under 11 claims are excluded.
+    type: simple
+    type_params:
+      measure: partd_claims
+  - name: partd_drug_cost
+    label: Part D drug cost $ (by drug detail)
+    description: Gross Part D drug cost from the by-Provider-and-Drug file (rows with 11+ claims only).
+    type: simple
+    type_params:
+      measure: partd_drug_cost
+  - name: partd_30day_fills
+    label: Part D 30-day fills (by drug detail)
+    description: Standardized 30-day fills from the by-Provider-and-Drug file.
+    type: simple
+    type_params:
+      measure: partd_30day_fills
+  - name: partd_day_supply
+    label: Part D days supply (by drug detail)
+    description: Days' supply dispensed, from the by-Provider-and-Drug file.
+    type: simple
+    type_params:
+      measure: partd_day_supply
+  - name: partd_drug_beneficiaries
+    label: Part D beneficiaries, summed over rows
+    description: Sum of per-row unique beneficiary counts; not a unique count across drugs or prescribers, and suppressed values (1-10) are missing.
+    type: simple
+    type_params:
+      measure: partd_drug_beneficiaries
+  - name: partd_prescribers_with_drug
+    label: Prescribers (by drug detail)
+    description: Distinct prescriber NPIs appearing in the by-Provider-and-Drug file for the selected drugs/filters.
+    type: simple
+    type_params:
+      measure: partd_prescribers_with_drug
+  - name: partd_cost_per_claim
+    label: Part D cost per claim $
+    description: Part D drug cost divided by Part D claims, from the by-Provider-and-Drug file.
+    type: ratio
+    type_params:
+      numerator: partd_drug_cost
+      denominator: partd_claims
+  - name: partd_provider_claims
+    label: Part D claims (prescriber totals)
+    description: All Part D claims per the by-Provider summary file, which includes drugs with fewer than 11 claims.
+    type: simple
+    type_params:
+      measure: partd_provider_claims
+  - name: partd_provider_drug_cost
+    label: Part D drug cost $ (prescriber totals)
+    description: Gross Part D drug cost per the by-Provider summary file.
+    type: simple
+    type_params:
+      measure: partd_provider_drug_cost
+  - name: partd_provider_30day_fills
+    label: Part D 30-day fills (prescriber totals)
+    description: Standardized 30-day fills per the by-Provider summary file.
+    type: simple
+    type_params:
+      measure: partd_provider_30day_fills
+  - name: partd_provider_beneficiaries
+    label: Part D beneficiaries, summed over prescribers
+    description: Sum of per-prescriber unique beneficiary counts; double-counts beneficiaries seen by several prescribers.
+    type: simple
+    type_params:
+      measure: partd_provider_beneficiaries
+  - name: partd_provider_brand_claims
+    label: Part D brand-name claims
+    description: Claims for brand-name drugs, by-Provider summary file.
+    type: simple
+    type_params:
+      measure: partd_provider_brand_claims
+  - name: partd_provider_generic_claims
+    label: Part D generic claims
+    description: Claims for generic drugs, by-Provider summary file.
+    type: simple
+    type_params:
+      measure: partd_provider_generic_claims
+  - name: partd_provider_opioid_claims
+    label: Part D opioid claims
+    description: Opioid claims, by-Provider summary file.
+    type: simple
+    type_params:
+      measure: partd_provider_opioid_claims
+  - name: partd_provider_opioid_drug_cost
+    label: Part D opioid drug cost $
+    description: Opioid drug cost, by-Provider summary file.
+    type: simple
+    type_params:
+      measure: partd_provider_opioid_drug_cost
+  - name: partd_provider_antibiotic_claims
+    label: Part D antibiotic claims
+    description: Antibiotic claims, by-Provider summary file.
+    type: simple
+    type_params:
+      measure: partd_provider_antibiotic_claims
+  - name: partd_provider_count
+    label: Part D prescribers
+    description: Distinct prescriber NPIs in the by-Provider summary file.
+    type: simple
+    type_params:
+      measure: partd_provider_count
+  - name: partd_provider_opioid_claim_share
+    label: Opioid share of Part D claims
+    description: Opioid claims divided by all Part D claims, from the by-Provider summary file.
+    type: ratio
+    type_params:
+      numerator: partd_provider_opioid_claims
+      denominator: partd_provider_claims

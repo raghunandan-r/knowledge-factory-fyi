@@ -27,6 +27,9 @@ open_payments:
   delete_raw_after_load: true    # Phase 1 gate passed 2026-11-26; bronze is the record
   expected:
     max_page_size: 500
+  # CMS summary files (all program years in one file), used only to reconcile layers
+  summaries:
+    national: {title: "National level payment total and averages for all years", table: op_national_summary}
 
 part_d:
   # Medicare Part D prescriber files (data.cms.gov). One catalog entry per data year;
@@ -53,3 +56,20 @@ nppes:
   expected:
     api_max_limit: 200
     api_skip_clamp: 1000
+
+# CMS's own documentation (make docs). Text goes to data/docs/text/<name>.md for agents.
+docs:
+  dir: data/docs
+  files:
+    # cms.gov "Explore the Data" page links this edition as current (checked 2026-11-26)
+    op_methodology_data_dictionary: https://www.cms.gov/files/document/open-payments-methodology-data-dictionary-document-january-2026.pdf
+    # data.cms.gov dataset-resources API lists these as each dataset's current docs
+    partd_methodology: https://data.cms.gov/sites/default/files/2026-05/MUP_DPR_RY26_20260421_Methodology_508.pdf
+    partd_dictionary_provider_drug: https://data.cms.gov/sites/default/files/2022-07/MUP_DPR_RY22_20220715_DD_PRV_Drug.pdf
+    partd_dictionary_provider: https://data.cms.gov/sites/default/files/2025-04/MUP_DPR_RY25_20250401_DD_PRV_508.pdf
+    partd_dictionary_geo_drug: https://data.cms.gov/sites/default/files/2025-04/MUP_DPR_RY25_20250401_DD_Geo_508.pdf
+  # NPPES ships its readme only inside the dissemination zips; take it from the smallest
+  # weekly zip listed on nppes.index_url. Doc name -> zip member name.
+  nppes_zip_members:
+    nppes_readme: NPPES_Data_Dissemination_Readme_v.2.pdf
+    nppes_code_values: NPPES_Data_Dissemination_CodeValues.pdf

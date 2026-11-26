@@ -1,0 +1,55 @@
+version: 2
+
+# Inputs to the semantic models in models/semantic/. Descriptions of every measure and
+# dimension live there.
+
+models:
+  - name: fct_general_payments
+    description: One row per Open Payments general payment record, with friendly column names. Semantic model general_payments.
+    columns:
+      - name: record_id
+        data_tests: [unique, not_null]
+      - name: amount_usd
+        description: Total_Amount_of_Payment_USDollars, DECIMAL(18,2).
+      - name: recipient_type
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['Covered Recipient Physician', 'Covered Recipient Non-Physician Practitioner', 'Covered Recipient Teaching Hospital']
+  - name: fct_research_payments
+    description: One row per Open Payments research payment record. Semantic model research_payments.
+    columns:
+      - name: record_id
+        data_tests: [unique, not_null]
+  - name: fct_ownership_interests
+    description: One row per physician ownership or investment interest record. Semantic model ownership_interests.
+    columns:
+      - name: record_id
+        data_tests: [unique, not_null]
+  - name: dim_providers
+    description: One row per NPI in NPPES, with npi_status (Active/Deactivated). Semantic model providers.
+    columns:
+      - name: npi
+        data_tests: [unique, not_null]
+      - name: npi_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['Active', 'Deactivated']
+  - name: bridge_provider_taxonomies
+    description: Every NPPES taxonomy code an NPI lists (up to 15), with its license and primary flag. Plain table, not in the semantic layer.
+    columns:
+      - name: provider_taxonomy_id
+        data_tests: [unique]
+  - name: fct_partd_prescriber_drug
+    description: One row per prescriber NPI x brand name x generic name x data year. Semantic model partd_prescriber_drug.
+    columns:
+      - name: prescriber_drug_id
+        data_tests: [unique, not_null]
+      - name: total_drug_cost
+        description: Tot_Drug_Cst, DECIMAL(18,2).
+  - name: fct_partd_prescribers
+    description: One row per prescriber NPI x data year (Part D by Provider summary). Semantic model partd_prescribers.
+    columns:
+      - name: prescriber_year_id
+        data_tests: [unique, not_null]

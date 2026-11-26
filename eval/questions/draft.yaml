@@ -14,7 +14,7 @@
 #   answer       shape the agent must return; the grader compares against gold SQL output
 #   expert_note  the definition the gold answer uses, and why. This is what makes the answer
 #                key defensible; agents never see it.
-#   sources      general | research | ownership | nppes | seed:<name>
+#   sources      general | research | ownership | nppes | part_d | seed:<name>
 #
 # Conventions used by every expert_note unless stated otherwise
 #   - "Physicians" = Covered_Recipient_Type 'Covered Recipient Physician'. NPPs and
@@ -689,3 +689,224 @@ questions:
     Psychiatry per seed:specialty_groups (Psychiatry & Neurology|Psychiatry and its
     subspecialties). Neurology is excluded.
   sources: [general, seed:specialty_groups]
+
+# ── COMPLIANCE / FRAUD SIGNALS (added 2026-11-26; see PLAN.md §9) ───────────
+# Each question pins down one red flag precisely enough to have one right answer. Whether
+# any flagged payment is improper is never graded: the data can't say.
+- id: q051
+  split: dev
+  persona: compliance
+  difficulty: multistep
+  traps: [GRAIN, ENTITY]
+  question: >-
+    In PY2025, how many physicians were paid by a single company for 25 or more speaker
+    engagements?
+  answer: {count: int}
+  expert_note: >-
+    Speaker engagement = Nature_of_Payment 'Compensation for services other than consulting,
+    including serving as faculty or as a speaker at a venue other than a continuing education
+    program': company-run speaker programs, the target of the OIG's 2020 Special Fraud Alert.
+    Accredited CME speaking is a separate category and is excluded. Engagements = the sum of
+    Number_of_Payments_Included_in_Total_Amount, not records. Count each physician (profile ID)
+    once if they reach 25 with any one making-payment ID.
+  sources: [general]
+
+- id: q052
+  split: holdout
+  persona: compliance
+  difficulty: multistep
+  traps: [GRAIN, ENTITY]
+  question: >-
+    Among companies that made at least 500 speaker payments to physicians in PY2025, which 5
+    paid the highest median fee per speaker payment?
+  answer: {ranked: [{company: str, usd: number}], k: 5}
+  expert_note: >-
+    Speaker as in q051. Fee per payment = Total_Amount ÷ Number_of_Payments_Included for each
+    record; the median is over records. 500 payments = the sum of Number_of_Payments_Included.
+    Company = making-payment ID, shown by its most frequent name.
+  sources: [general]
+
+- id: q053
+  split: dev
+  persona: compliance
+  difficulty: filtered
+  traps: [GRAIN]
+  question: >-
+    How many physicians received 50 or more food and beverage transfers from a single company
+    in PY2024?
+  answer: {count: int}
+  expert_note: >-
+    Transfers = the sum of Number_of_Payments_Included_in_Total_Amount, not records. Per
+    physician profile ID × making-payment ID; a physician counts once.
+  sources: [general]
+
+- id: q054
+  split: holdout
+  persona: compliance
+  difficulty: filtered
+  traps: [ENTITY]
+  question: >-
+    How much did companies pay in PY2025 for physicians' travel and lodging to destinations
+    outside the United States, and which 3 countries received the most?
+  answer: {usd: number, ranked: [{country: str, usd: number}], k: 3}
+  expert_note: >-
+    Nature_of_Payment 'Travel and Lodging', physicians only. Destination = Country_of_Travel.
+    'United States Minor Outlying Islands' are US territory, so they count as inside the
+    United States; 'United Arab Emirates' also contains "United" and is abroad.
+  sources: [general]
+
+- id: q055
+  split: dev
+  persona: compliance
+  difficulty: multistep
+  traps: [ENTITY, TIME]
+  question: >-
+    How many PY2025 general payment records went to an NPI that NPPES shows as deactivated
+    on the payment date, and what were they worth?
+  answer: {records: int, usd: number}
+  expert_note: >-
+    Join Covered_Recipient_NPI to NPPES. Deactivated on the payment date = NPI Deactivation
+    Date before Date_of_Payment, with no reactivation between the two. Records with a blank
+    NPI are excluded. Both sources store dates as MM/DD/YYYY text.
+  sources: [general, nppes]
+
+- id: q056
+  split: holdout
+  persona: coi
+  difficulty: multistep
+  traps: [FILES, ENTITY]
+  question: >-
+    How many physicians in PY2025 both received royalty or license payments from a company
+    and held an ownership or investment interest in that same company?
+  answer: {count: int}
+  expert_note: >-
+    Royalty = Nature_of_Payment 'Royalty or License' in the general file. Match on physician
+    profile ID (Physician_Profile_ID in the ownership file) and making-payment ID. Interests
+    held by an immediate family member count, as reported.
+  sources: [general, ownership]
+
+- id: q057
+  split: dev
+  persona: compliance
+  difficulty: filtered
+  traps: [FILES]
+  question: >-
+    What share of PY2025 clinical (not preclinical) research dollars had no ClinicalTrials.gov
+    identifier?
+  answer: {percent: number}
+  expert_note: >-
+    Research file, all recipient types, Preclinical_Research_Indicator = 'No'. No identifier =
+    ClinicalTrials_Gov_Identifier blank or not of the form NCT followed by 8 digits.
+  sources: [research]
+
+- id: q058
+  split: holdout
+  persona: compliance
+  difficulty: filtered
+  traps: [ENTITY]
+  question: >-
+    What was the total value of PY2025 general payments that companies made to a third-party
+    entity instead of the physician, and which company paid the most this way?
+  answer: {usd: number, top_company: str, top_usd: number}
+  expert_note: >-
+    Third_Party_Payment_Recipient_Indicator = 'Entity', physicians only. Company =
+    making-payment ID, shown by its most frequent name. 'Individual' third parties are excluded.
+  sources: [general]
+
+- id: q059
+  split: dev
+  persona: compliance
+  difficulty: multistep
+  traps: [TIME, ENTITY]
+  question: >-
+    Which companies with at least 10,000 PY2024 general payment records had more than half of
+    those records marked as changed in the current publication?
+  answer: {set: [str]}
+  expert_note: >-
+    Change_Type = 'CHANGED', all recipient types. Company = making-payment ID, shown by its
+    most frequent name. A company that resubmits its whole year shows up here; most companies
+    change almost nothing. (Disputes were the first idea, but PY2024 has only 327 disputed
+    records in total, too few to compare companies.)
+  sources: [general]
+
+- id: q060
+  split: dev
+  persona: compliance
+  difficulty: multistep
+  traps: [SUPPR, WIDE, ENTITY]
+  question: >-
+    In 2024, how did Medicare Part D prescribing of Ozempic compare between prescribers who
+    received a PY2024 general payment from Novo Nordisk associated with Ozempic and those who
+    didn't?
+  answer: {table: [{group: str, prescribers: int, avg_claims: number}]}
+  expert_note: >-
+    Prescribers = NPIs with a 2024 Part D by-provider-and-drug row for Brnd_Name 'Ozempic'.
+    Only prescribers with 11 or more claims have a row, so both groups cover 11+ claims only.
+    Paid = the NPI appears on a PY2024 general record from a Novo Nordisk making-payment ID
+    (seed:manufacturer_family) with Ozempic in any of product slots 1–5, case-insensitive.
+    avg_claims = mean Tot_Clms. Records with a blank NPI can't be matched and are dropped
+    (in SQL, a NULL in the paid list makes NOT IN return no rows).
+  sources: [general, part_d, seed:manufacturer_family]
+
+- id: q061
+  split: holdout
+  persona: compliance
+  difficulty: multistep
+  traps: [SUPPR, TIME, ENTITY]
+  question: >-
+    Of the physicians Novo Nordisk paid for speaking about Ozempic in PY2024, what share were
+    already among the top 10% of Ozempic prescribers in Medicare Part D in 2023?
+  answer: {percent: number}
+  expert_note: >-
+    Speaker as in q051, with Ozempic in any product slot, from Novo making-payment IDs.
+    Top 10% = rank 2023 Part D Ozempic rows by Tot_Clms, descending; the top ceil(0.1 × rows).
+    Denominator = all such speakers with an NPI, including those with no 2023 row.
+  sources: [general, part_d, seed:manufacturer_family]
+
+- id: q062
+  split: dev
+  persona: compliance
+  difficulty: multistep
+  traps: [SUPPR, WIDE]
+  question: >-
+    Of the physicians paid $5,000 or more in PY2024 for consulting or speaking associated with
+    Ozempic, how many have no 2024 Medicare Part D row for Ozempic?
+  answer: {paid: int, no_row: int}
+  expert_note: >-
+    Consulting = 'Consulting Fee'; speaking = as in q051. A record counts in full if any
+    product slot names Ozempic (case-insensitive). Sum per NPI. "No row" means fewer than 11
+    Medicare claims or none, so an answer saying they "never prescribed" it is wrong in its
+    wording even with the right count. ($10,000 in consulting alone leaves one physician,
+    too few to be a question.)
+  sources: [general, part_d]
+
+- id: q063
+  split: holdout
+  persona: policy
+  difficulty: multistep
+  traps: [TIME, SUPPR, ENTITY]
+  question: >-
+    Among physicians with Mounjaro rows in Medicare Part D in both 2023 and 2024, how did the
+    median change in Mounjaro claims compare between those Eli Lilly first paid in connection
+    with Mounjaro in PY2024 and those Lilly paid in neither year?
+  answer: {table: [{group: str, physicians: int, median_change_claims: number}]}
+  expert_note: >-
+    First paid = a PY2024 general record from a Lilly making-payment ID (seed:manufacturer_family)
+    with Mounjaro in any product slot, and no such record in PY2023. Neither = no such record in
+    either year. Change = Tot_Clms 2024 − Tot_Clms 2023. Join on NPI.
+  sources: [general, part_d, seed:manufacturer_family]
+
+- id: q064
+  split: dev
+  persona: policy
+  difficulty: filtered
+  traps: [SUPPR]
+  question: >-
+    In 2024, how many Medicare Part D claims for Ozempic are missing from the per-prescriber file
+    compared with CMS's national total?
+  answer: {national_claims: int, prescriber_claims: int, missing: int}
+  expert_note: >-
+    National = the by-geography-and-drug file at Prscrbr_Geo_Lvl 'National', Brnd_Name
+    'Ozempic'. Prescriber = the sum of Tot_Clms over by-provider-and-drug rows for Ozempic.
+    The difference is claims in rows under 11 claims, which CMS leaves out.
+  sources: [part_d]

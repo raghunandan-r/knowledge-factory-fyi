@@ -10,6 +10,7 @@ import pytest
 
 from ingest import sync_nppes as nppes
 from ingest import sync_open_payments as op
+from ingest import sync_part_d as partd
 from ingest import watermark as wm
 from ingest.common import connect, load_config
 
@@ -211,3 +212,61 @@ def test_nppes_weekly_upsert_replaces_npi(cfg, tmp_path):
         "SELECT npi, provider_last_name FROM bronze.nppes_npidata ORDER BY npi"
     ).fetchall()
     assert rows == [("1", "NEW"), ("2", "KEEP"), ("3", "ADDED")]
+
+
+# ── Part D ─────────────────────────────────────────────────────────────────
+
+PD_TITLE = "Medicare Part D Prescribers - by Provider and Drug"
+PD_CSV = "https://data.cms.gov/sites/default/files/2026-05/x/MUP_DPR_RY26_P04_V10_DY24_NPIBN.csv"
+
+
+def pd_catalog(csv=PD_CSV, year="2024"):
+    entry = {
+        "title": f"{PD_TITLE} : {year}-12-01",
+        "temporal": [{"startDate": f"{year}-01-01", "endDate": f"{year}-12-31"}],
+        "modified": "2026-05-21",
+        "distribution": [
+            {"format": "API", "accessURL": "https://data.cms.gov/data-api/v1/dataset/a/data"},
+            {"downloadURL": csv},
+        ],
+    }
+    by_provider = dict(entry, title=f"Medicare Part D Prescribers - by Provider : {year}-12-03")
+    return {"dataset": [entry, by_provider]}
+
+
+def test_part_d_discover_matches_exact_title_and_year(cfg):
+    (ds,) = partd.discover(cfg, pd_catalog(), ["prescriber_drug"], [2024])
+    assert (ds.key, ds.release) == ("prescriber_drug_2024", "MUP_DPR_RY26_P04_V10_DY24_NPIBN")
+    assert ds.api_url.endswith("/data")
+    with pytest.raises(RuntimeError, match="expected 1 catalog entry"):
+        partd.discover(cfg, pd_catalog(), ["prescriber_drug"], [2023])
+
+
+def test_part_d_discover_rejects_file_for_wrong_year(cfg):
+    with pytest.raises(RuntimeError, match="file name says"):
+        partd.discover(
+            cfg, pd_catalog(csv=PD_CSV.replace("DY24", "DY23")), ["prescriber_drug"], [2024]
+        )
+
+
+def test_part_d_load_tags_year_is_idempotent_and_checks_count(cfg, tmp_path, monkeypatch):
+    (ds,) = partd.discover(cfg, pd_catalog(), ["prescriber_drug"], [2024])
+    csv = write_csv(
+        tmp_path / "pd.csv",
+        ["0123456789,Ozempic,12", "0123456789,Jardiance,40"],
+        header="Prscrbr_NPI,Brnd_Name,Tot_Clms",
+    )
+    monkeypatch.setattr(partd, "expected_rows", lambda *a: 2)
+    con = connect(cfg)
+    wm.ensure_meta(con)
+    partd.load(con, None, ds, csv, False)
+    partd.load(con, None, ds, csv, False)  # same release again
+    rows = con.execute(
+        "SELECT prscrbr_npi, brnd_name, _data_year FROM bronze.partd_prescriber_drug ORDER BY 2"
+    ).fetchall()
+    assert rows == [("0123456789", "Jardiance", "2024"), ("0123456789", "Ozempic", "2024")]
+    monkeypatch.setattr(partd, "expected_rows", lambda *a: 3)
+    nxt = partd.Dataset(**{**ds.__dict__, "release": "MUP_DPR_RY27_P04_V10_DY24_NPIBN"})
+    with pytest.raises(RuntimeError, match="CMS reports 3"):
+        partd.load(con, None, nxt, csv, False)
+    assert wm.get(con, partd.SOURCE, ds.key) == ds.release  # old watermark kept

@@ -1,7 +1,8 @@
 # knowledge-factory-fyi
 
-The repo proves one claim: diagnose why an agent answers wrong on messy data, fix the
-data layer, and show the gain in numbers. See PLAN.md for phases and gates.
+The repo measures a knowledge factory: agents flag gaps, a curator agent fixes the semantic
+layer, and the gain is scored on held-out questions. PLAN.md has phases and gates; `index.md`
+maps questions to code. Update `index.md` in the same change as the code it points to.
 
 ## Rules that protect the claim
 
@@ -11,6 +12,8 @@ data layer, and show the gain in numbers. See PLAN.md for phases and gates.
 - **Gold SQL runs against bronze**, never against silver/gold models.
 - **Bronze is append-only and all text.** Money becomes `DECIMAL(18,2)` in silver, never DOUBLE.
 - A watermark moves only in the same transaction as the validated load.
+- **The curator never reads gold answers, gold SQL, or anything from the held-out set.**
+- Tagged layers (`starter-v1`, `reference-v1`) don't change after tagging.
 
 ## Commands
 

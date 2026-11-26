@@ -6,8 +6,8 @@ Status: accepted, 2026-11-23
 
 The Open Payments API caps pages at 500 rows; PY2025 General alone has 16.1M rows
 (about 32,000 requests). The NPPES API caps at 200 results and silently stops paging
-at skip 1,000. Bulk CSVs/zips are the only complete source. The APIs remain what
-Level 1 agents use, because that is what an agent would naively reach for.
+at skip 1,000. Bulk CSVs/zips are the only complete source. Agents never use the APIs
+(PLAN.md §7).
 
 ## "Incremental" means per release, not per row
 

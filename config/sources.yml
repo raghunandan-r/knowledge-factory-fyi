@@ -28,6 +28,18 @@ open_payments:
   expected:
     max_page_size: 500
 
+part_d:
+  # Medicare Part D prescriber files (data.cms.gov). One catalog entry per data year;
+  # the CSV name carries the release (e.g. MUP_DPR_RY26_P04_V10_DY24_NPIBN).
+  catalog_url: https://data.cms.gov/data.json
+  data_years: [2023, 2024]    # the overlap with Open Payments PY2023-2025
+  datasets:
+    # catalog title (before " : ") -> bronze table
+    prescriber_drug: {title: "Medicare Part D Prescribers - by Provider and Drug",  table: partd_prescriber_drug}
+    prescriber:      {title: "Medicare Part D Prescribers - by Provider",           table: partd_prescriber}
+    geo_drug:        {title: "Medicare Part D Prescribers - by Geography and Drug", table: partd_geo_drug}
+  delete_raw_after_load: false
+
 nppes:
   index_url: https://download.cms.gov/nppes/NPI_Files.html
   base_url: https://download.cms.gov/nppes/

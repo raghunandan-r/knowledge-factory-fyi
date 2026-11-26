@@ -1,213 +1,260 @@
 # knowledge-factory-fyi: plan
 
-**The one claim:** I can find why an agent gets answers wrong on messy data, fix the data layer (not the prompt), and show the gain in numbers that hold up on questions the fixes never saw.
+**The claim:** semantic layers are mainstream, but keeping them complete and current is not.
+I measure whether a knowledge factory can do that upkeep. In a knowledge factory, agents flag
+what they were missing, a curator agent turns the flags into semantic-layer changes, and a
+human approves each change without writing any of it. The test is how much of the gap between
+a week-one semantic layer and an expert-built one the factory closes, on questions it never saw.
 
-Everything below exists to make that claim checkable. Anything that doesn't serve it is on the cut list.
-
----
-
-## 1. What the APIs actually do (probed 2026-11-22)
-
-These were checked with live requests, not taken from docs. Neither CMS API's docs page renders without JavaScript, so the probe results are the source of truth. Re-run `ingest/api_probe.py` before relying on them.
-
-| Source | Auth | Page size | Rate limit | Watermark available | Use it for |
-|---|---|---|---|---|---|
-| **Open Payments** datastore API `openpaymentsdata.cms.gov/api/1/datastore/query/{dataset}/0` | None | **Max 500 rows** (`limit=1000` → HTTP 400) | Not documented; no rate-limit headers returned; responses CDN-cached 1h | Dataset `modified` in `/api/1/metastore/schemas/dataset/items` (one date per publication cycle, e.g. `2026-06-30`); per-record `Change_Type` ∈ {NEW, ADD, CHANGED, UNCHANGED} | L1 "live API" agents only |
-| **Open Payments** bulk CSV `download.cms.gov/openpayments/PGYR{yyyy}_P{pubdate}/...` | None | Whole file | n/a | Publication date in the folder name | **Bronze load** |
-| **NPPES** registry API `npiregistry.cms.hhs.gov/api/?version=2.1` | None | Max 200 (`limit=201` is silently capped) | Not documented; no rate-limit headers | None | L1 agents only |
-| **NPPES** bulk `download.cms.gov/nppes/NPI_Files.html` | None | Monthly full V.2 (~1.08 GB zip), weekly incremental (~6 MB), monthly deactivation (~2.6 MB) | n/a | File date in the name. V.1 files were retired 2026-03-03, so use V.2 | **Bronze load** |
-| **openFDA** (fallback) | Free key required | 1,000 per request; `skip` max 25,000 | 240/min; 1,000/day without a key, 120,000/day with one | Bulk zips; full re-download required on change | Fallback only, and the source for the shim's documented limit |
-
-**Probe findings to build the eval around:**
-
-1. **Pulling bronze through the API isn't practical.** PY2025 General Payments has **16,131,856 rows**, which is about 32,300 requests at 500 rows each, per file per year. Bronze comes from the bulk CSVs, and the API is what the L1 agents get.
-2. **NPPES silently clamps `skip` at 1000.** `skip=1001` returns the same rows as `skip=1000`, with HTTP 200 and no error, so at most 1,200 records are reachable per query. An agent that pages past that gets duplicates and a wrong count without knowing it. This is a ready-made L1 failure case.
-3. **Rows, payments and recipients are three different counts.** PY2025 physician rows (10,129,623) and NPP rows (5,966,664) exactly match CMS's published "payment counts". The remaining 35,569 rows are teaching hospitals, which the national summary doesn't cover at all. CMS's physician count (666,748) is distinct recipients. An agent asked "how many payments" has three plausible numbers to choose from.
-4. **The NPI is already on most rows.** Only 42,823 of 16.1M PY2025 rows have a blank `Covered_Recipient_NPI`, and 35,569 of those are teaching hospitals. So entity resolution is scored on a **masked-NPI** benchmark, and it fills only the roughly 7k true gaps in gold. Stated honestly in the README, this is a strength.
-
-**Decision:** sync **PY2023–PY2025** (General, Research, Ownership) plus NPPES V.2. That's roughly 50M general-payment rows, which DuckDB handles on a laptop, and three years is enough for cross-year and republication traps.
+"Knowledge factory" follows Harrison Chase's framing (LangChain blog, 2026-11-21): agents flag
+missing knowledge, and a background curator turns flags and traces into maintained knowledge.
+That post publishes no measurements. This repo is the measured version.
 
 ---
 
-## 2. Build order
+## 1. Data (loaded)
 
-Each phase ends in a gate. Don't start the next phase until the gate passes. The order is deliberate: **the eval and the baseline failures come before any modeling**, so the fixes are driven by observed failures and not by guesses.
+- **Open Payments** PY2023–2025: General, Research and Ownership files, from the bulk CSVs of
+  release `P06302026_06032026`. These are the payments drug and device makers must report to
+  doctors, non-physician practitioners (NPPs) and teaching hospitals.
+- **NPPES** V.2, November 2026 full file plus the weekly update. This is the national provider
+  registry: each provider's NPI, name, address and taxonomy (specialty) codes.
+- **Medicare Part D prescribers**, data years 2023 and 2024 (`make sync-partd`), from
+  data.cms.gov: *by Provider and Drug* (one row per prescriber NPI × drug × year),
+  *by Provider* (one row per prescriber) and *by Geography and Drug* (national and state totals
+  per drug). This is what Medicare's drug plans paid for, by the prescriber's NPI. It joins to
+  Open Payments on NPI. 2023 and 2024 are the only years both sources cover: Part D 2025 is due
+  around May 2027.
+- Agents never use the CMS APIs. `make probe` keeps the probed API limits as a record only.
 
-### Phase 0: Skeleton (small)
-- `uv` project, `Makefile`, pinned versions (`duckdb`, `dbt-core`, `dbt-duckdb`, `dbt-metricflow`, `anthropic`), and `.env.example`.
-- `ingest/api_probe.py` reproduces every fact in §1 and writes `reports/api_probe.json`.
-- **Gate:** `make probe` passes on a clean checkout.
+Three facts shape the eval:
+1. Rows, individual payments and distinct recipients are three different counts. One row can
+   bundle several payments (`Number_of_Payments_Included_in_Total_Amount`).
+2. Teaching hospitals are a tiny share of rows but a large share of dollars, and the CMS
+   national summary leaves them out.
+3. **Only one release is loaded**, so no record appears twice. Republication double-counting
+   (`REPUB`) can't happen, which means q008, q009 and q011 can't fail as written. Phase 3
+   resolves this (see there).
+4. **Part D drops small cells.** A prescriber × drug row with fewer than 11 claims is left out
+   for patient privacy. So a missing row means "fewer than 11 or none", never "zero". It also
+   means the per-prescriber rows add up to less than CMS's national total for the same drug.
+5. **Part D has no manufacturer column.** It names drugs by brand and generic name only. Linking
+   a company's payments to prescribing goes through the product names in Open Payments'
+   product columns, which are free text ("OZEMPIC", "Ozempic").
+6. **Part D covers Medicare patients only:** no commercial insurance and no Medicaid. Drugs given
+   in a clinic (many infusions) are in Part B, which isn't loaded.
 
-### Phase 1: Incremental sync → DuckDB bronze (medium)
-- `ingest/watermark.py` keeps a `meta.sync_state` table: `(source, dataset_id, watermark, rows_loaded, file_sha256, synced_at)`.
-- **Open Payments:** read the metastore. If a dataset's `modified` is later than the watermark, download the bulk CSV and `read_csv` it into `bronze.op_general_raw` with `_publication`, `_ingested_at` and `_file_sha256`. Upsert on `record_id`; `Change_Type` drives the merge and goes to an audit table.
-- **NPPES:** apply the monthly full file once, then weekly incrementals newer than the watermark, then deactivations.
-- Bronze is append-only. Never clean anything here.
-- **Gate:** running `make sync` twice in a row loads 0 rows the second time. Bronze row counts match the API `count=true` for every dataset.
+## 2. Arms: what the agent is given
 
-### Phase 2: Write the eval and freeze it (medium, and the most important phase)
-- 50 questions in `eval/questions/{dev,holdout}.yaml`: 30 dev and 20 held-out, stratified by trap (§4).
-- One `eval/gold_sql/qNNN.sql` per question, **written against bronze, not gold**. If the answer key were written against my own dbt models, the semantic layer would be graded against itself.
-- 10 permission-leak questions in `eval/questions/leaks.yaml` (§5).
-- `eval/grade.py` compares answers: numbers within ±0.5%, sets compared as sets, rankings as top-k in order, and refusals as an exact class.
-- **Gate:** `git tag eval-v1` is created, and `eval/MANIFEST.sha256` is committed **before the first agent run**. The README cites the tag, and every later commit can show the eval didn't move.
+The agent is the same in every arm: my own Messages API tool loop (`agents/harness.py`),
+`claude-opus-5-5`, with a fixed prompt and effort. Only the context changes.
 
-### Phase 3: Baseline runs and diagnosis, L1 + L2 (medium)
-- `agents/harness.py` is my own Messages API tool loop (`claude-opus-5-5`, fixed effort, fixed system prompt). The context level is the only variable. I use my own loop rather than Managed Agents because the tools are local DuckDB and I need per-tool-call timing.
-- L1 tools: `http_get` against the Open Payments and NPPES APIs **through `agents/tools/api_shim.py`** (see §6).
-- L2 tools: read-only `sql()` against bronze, plus `describe_table()`.
-- Run 50 questions × 3 runs at each level. Every wrong answer gets a cause from `eval/taxonomy.md`, assigned by me with an LLM pre-label I review.
-- **Gate:** the failure taxonomy table (README table 2) is filled in for L1/L2. This is the "diagnose" evidence.
+| Arm | Agent gets | Built by | Role |
+|---|---|---|---|
+| Raw | Read-only `sql()` on bronze, plus the CMS data dictionary and methodology docs | nobody | The "just give it the docs" baseline |
+| Starter (round 0) | dbt models and MetricFlow YAML written from CMS docs only, time-boxed, tag `starter-v1` | me, before any agent run | What a data team ships in week one |
+| Factory round N | Starter plus curator changes merged through round N | curator agent; I approve or reject each change | The claim |
+| Reference | A semantic layer I write after studying dev failures, tag `reference-v1`, with my hours logged | me | Hand-built comparison. It isn't a ceiling: the factory may beat it |
 
-### Phase 4: Silver/gold + reconciliation gate (medium)
-- dbt Core on `dbt-duckdb`. Silver unpivots products 1–5 and specialties 1–6, collapses republished records using `Change_Type`, and conforms recipient types. Gold builds `fct_payment` (one row per record, with the grain documented), `dim_recipient`, `dim_manufacturer` and `dim_product`.
-- `seeds/cms_published_totals.csv` comes from the national summary file (`PBLCTN_NTNL_SMRY_*`), at the grain program year × payment type (General/Research) × recipient type (Physician/NPP), with dollars and payment counts.
-- `tests/reconcile_program_year_totals.sql`: counts must match exactly and dollars within $1 per cell. **`make report` depends on this test**, so no number reaches the README unless gold reconciles. Teaching hospitals and Ownership have no published total in that file, so they're reported as "not reconcilable against CMS summary" and not silently skipped.
-- **Gate:** reconciliation passes for PY2023–2025.
+Tools in the starter, factory and reference arms: `list_metrics`, `query_metrics`,
+`explain_metric`, read-only `sql()` on silver/gold (never bronze), and `flag_gap(question_id,
+what_was_missing, evidence)`.
 
-### Phase 5: Entity-resolution batch job (medium)
-- **Task:** given a payment recipient's name, address, specialty and license states, plus NPPES candidates from deterministic blocking (last name + state + ZIP3, top 10), return one NPI or `NO_MATCH`.
-- **Benchmark:** 2,000 recipients with a known NPI, stratified (common surnames, multiple practice locations, NPPs, recent name changes), with the NPI masked. In another 300 cases the true NPI is **removed from the candidates**, so the correct answer is `NO_MATCH`. That catches confident wrong matches.
-- **Two models through Message Batches** (50% discount): `claude-haiku-5-5` and `claude-opus-5-5`. Every output row carries `model_version`, `prompt_sha`, `batch_id`, `candidate_set_sha` and `run_at` (`silver.er_matches`).
-- Cost comes from the `usage` fields multiplied by `config/pricing.yml` (pinned prices with a date), never estimated.
-- Only matches from the better model above a precision threshold (≥ 0.99 on the benchmark) fill the roughly 7k real NPI gaps in gold.
-- **Gate:** ER table (README table 4) filled in. Re-running the scorer from stored outputs reproduces it exactly.
+## 3. The curator: what it sees and what it may change
 
-### Phase 6: MetricFlow semantic layer + permissions, L3 (medium)
-- `models/semantic/*.yml` defines the semantic models and metrics (`total_payment_usd`, `payment_count`, `distinct_recipients`, `research_payment_usd`, ...), with descriptions written for an agent reader.
-- Queries run locally with `mf query` / the MetricFlow Python API against DuckDB. No dbt Cloud.
-- Personas are enforced in the data layer (§5).
-- L3 tools: `list_metrics`, `list_dimensions`, `query_metrics`, `explain_metric`. **No raw SQL.**
-- **Gate:** `mf validate-configs` passes, and the L3 row of every README table is filled in.
+The curator gets what a company has and nothing a company lacks.
 
-### Phase 7: Curator loop, L4 (medium)
-- L4 agents get an extra tool, `flag_gap(question_id, what_was_missing, evidence)`.
-- `curator/propose.py` clusters the **dev-set** flags, drafts semantic YAML changes (descriptions, synonyms, a new dimension or metric, a default filter), opens a branch, and runs `gh pr create`. I review and merge.
-- CI on every curator PR runs `dbt build`, `mf validate-configs`, the reconciliation test, and `curator/guardrails.py`. The guardrails reject any diff that contains a literal answer value, a question ID, or text from the held-out set.
-- After each merge, rerun dev and held-out. Run 3 rounds, or stop when held-out gains less than 1 question.
-- **Gate:** the curator table (README table 3) shows the dev and held-out scores for every round, including rounds that didn't help.
+| The curator sees | The curator never sees |
+|---|---|
+| The data, the CMS docs, and the current semantic layer and models | Gold answers or gold SQL |
+| Agent traces and flags from dev runs | Anything from held-out: questions, traces, flags or scores |
+| Right or wrong for each dev question | |
+| Reviewer corrections on dev questions | |
 
-### Phase 8: Load test, ~100 agents (small)
-- `load/replay.py` replays the **recorded tool-call traces** from Phases 3–7 at 100 concurrent workers. That measures the data layer without paying for 100× the LLM calls.
-- It records the p50/p95 of each tool call and the 429 count **by source** (data shim and Anthropic API kept separate).
-- One live LLM run at 100 concurrency (a small sample) gives the end-to-end p95.
-- **Gate:** the latency and 429 columns are filled in.
+- **Reviewer corrections** stand in for a human correcting the agent during a session. Each dev
+  question has a frozen `correction:` field: the definition a domain expert would give
+  ("count all five product columns"), never a number. When a dev question is wrong in most
+  runs, its correction goes to the curator.
+- **The curator may change** semantic YAML, metric and dimension descriptions, silver/gold dbt
+  SQL, and its own seeds.
+- **Every change is a pull request.** CI runs `dbt build`, `mf validate-configs`, the
+  reconciliation test and `curator/guardrails.py`. The guardrails reject any diff that contains
+  a literal answer value, a question ID or text from the held-out set.
+- **I only approve or reject, and never edit.** If I edited the curator's changes, the factory
+  would really be me.
 
-### Phase 9: Write-up (small)
-- `reports/make_readme_table.py` renders every table from `reports/results.json`. No hand-typed numbers.
-- Add one worked example per top failure cause: the question, the wrong answer, the root cause, the YAML or model fix, and the answer after the fix.
+## 4. Build order
 
-**Cut line if time-boxed:** in this order, drop Ownership payments, then the live 100-agent LLM run (keep the replay), then curator round 3. Never cut: the frozen eval, the reconciliation gate, the held-out split, the failure taxonomy.
+Each phase ends in a gate. Don't start the next phase until the gate passes.
 
----
+### Phase 0: Skeleton (done)
+`make probe` passes.
 
-## 3. Repo layout
+### Phase 1: Sync to bronze (done)
+`make verify` passes: running the sync twice loads 0 rows the second time, and bronze counts
+match the source.
 
-```
-knowledge-factory-fyi/
-├── README.md                    # results first, method second
-├── PLAN.md
-├── Makefile                     # probe | sync | dbt | er | eval L=… | curate | load | report
-├── pyproject.toml               # uv; pinned versions
-├── .env.example                 # ANTHROPIC_API_KEY, OPENFDA_API_KEY
-├── config/
-│   ├── sources.yml              # dataset ids, program years, probed limits
-│   ├── pricing.yml              # $/MTok per model, batch discount, as-of date
-│   └── personas.yml             # who can see what
-├── ingest/
-│   ├── api_probe.py
-│   ├── watermark.py
-│   ├── sync_open_payments.py
-│   └── sync_nppes.py
-├── dbt/
-│   ├── dbt_project.yml
-│   ├── profiles.yml             # dbt-duckdb → data/warehouse.duckdb
-│   ├── seeds/cms_published_totals.csv
-│   ├── models/
-│   │   ├── silver/              # stg_op_general, stg_op_research, stg_nppes, …
-│   │   ├── gold/                # fct_payment, dim_recipient, dim_manufacturer, dim_product
-│   │   ├── personas/            # one schema of secured views per persona
-│   │   └── semantic/            # semantic_models.yml, metrics.yml, saved_queries.yml
-│   └── tests/reconcile_program_year_totals.sql
-├── er/
-│   ├── build_candidates.py      # deterministic blocking against NPPES
-│   ├── make_benchmark.py        # masked-NPI + NO_MATCH sets
-│   ├── submit_batch.py
-│   ├── collect_batch.py
-│   ├── score.py
-│   └── prompts/er_v1.md
-├── agents/
-│   ├── harness.py               # tool loop; logs every call w/ timing + usage
-│   ├── levels/                  # l1_api.py, l2_raw.py, l3_semantic.py, l4_curated.py
-│   └── tools/                   # api_shim.py, duckdb_sql.py, metricflow.py, flag_gap.py
-├── curator/
-│   ├── propose.py
-│   └── guardrails.py
-├── eval/
-│   ├── questions/               # dev.yaml (30), holdout.yaml (20), leaks.yaml (10)
-│   ├── gold_sql/                # q001.sql … q050.sql, written against bronze
-│   ├── taxonomy.md              # failure causes, with definitions
-│   ├── grade.py
-│   └── MANIFEST.sha256
-├── load/replay.py
-├── reports/
-│   ├── results.json             # single source for every README number
-│   └── make_readme_table.py
-├── docs/adr/                    # one page per decision (bulk vs API, gold SQL on bronze, …)
-├── .github/workflows/ci.yml     # dbt build + mf validate + reconcile + guardrails
-└── data/                        # gitignored: raw/, warehouse.duckdb, traces/
-```
+### Phase 2: Feasibility pilot (next; this phase can kill the project)
+This tests whether a week-one semantic layer leaves enough wrong answers for a factory to fix.
+1. Pick 12 dev draft questions with at least one per trap, skipping `REPUB`. Write their gold
+   SQL against bronze. Never run the held-out drafts before the freeze.
+2. Build the starter layer from the CMS docs only, time-boxed to 2 days. It includes the
+   reconciliation test against the CMS national summary (`PBLCTN_NTNL_SMRY_*`): counts must
+   match exactly, and dollars to within $1 per cell, by program year × General/Research ×
+   Physician/NPP. Tag `starter-v1`. Don't touch it after seeing pilot results.
+3. Write a minimal harness and grader. Numbers pass within ±0.5%, sets compare as sets,
+   rankings compare as the top k in order.
+4. Run the raw and starter arms 3 times each on the 12 questions.
 
----
+**Decide:**
+- If the starter fails 4 or more of the 12 (in most runs), across 3 or more traps, there's room
+  for the factory, so continue.
+- If it fails fewer than 4, the questions are too easy for a semantic layer. Add harder
+  long-tail questions (medians, shares, multi-file, company families) before continuing, or stop.
+- If raw and starter score about the same, the semantic layer adds nothing by itself. Note it,
+  because it changes the story.
 
-## 4. The 50 questions: stratify by trap
+**Rule:** the pilot questions and their results go in the README, labeled "pilot." Questions
+are never dropped one at a time for being answered correctly. Any cut is a whole trap, logged in
+§8 with the reason. Otherwise I'd be keeping only the questions the starter fails.
 
-Every question is tagged with the trap it targets, and the taxonomy uses the same tags. That's what lets the README say "fixing X fixed these N questions."
+**Gate:** the decision and its numbers are logged in §8.
 
-| Tag | Trap | Example question shape |
+### Phase 3: Write and freeze the eval
+- 30 dev and 20 held-out hand-written questions, stratified by trap. Every dev question gets a
+  `correction:`. Resolve every `verify:` item against the data.
+- **Templated held-out variants.** About 10 templates (for example, "total PY{year} payments
+  linked to {drug}"), each with a frozen parameter list and gold SQL generated from the same
+  template. They're reported per trap, because 20 variants of one template test one trap.
+- **One trap held out entirely,** with no dev questions and no corrections. It's chosen and
+  logged in §8 before the freeze. It tests whether the factory learns anything it wasn't told.
+- **Fix the trap list.** Drop `PAGE`, which only applied to API agents: retag q040–q044 by their
+  next trap or rewrite them. Resolve `REPUB` by loading an earlier release of PY2023/PY2024
+  if CMS still serves one, or else cut q008, q009 and q011. Pin q007's meaning of "added"
+  (PY2024 uses `NEW`, while PY2025 uses both `NEW` and `ADD`).
+- Delete `eval/questions/leaks_draft.yaml` (see §7).
+- **Gate:** `git tag eval-v1` and a committed `eval/MANIFEST.sha256`, both before the first
+  scored run.
+
+### Phase 4: Baselines
+Run the raw and starter arms on all of dev and held-out, 3 runs each. Every wrong answer gets a
+trap label in `eval/taxonomy.md` (an LLM pre-labels; I review).
+**Gate:** the raw and starter rows of the results table are filled in.
+
+### Phase 5: Reference layer
+I write it from dev failures only and log my hours. Tag `reference-v1` **before any factory
+round**, so the reference can't copy the curator. Then run it.
+**Gate:** the reference row is filled in.
+
+### Phase 6: Factory rounds
+Each round goes: dev runs → flags, traces and corrections → curator PR → CI → I approve or
+reject → rerun dev and held-out. Run up to 3 rounds, and stop early when a round produces no new
+held-out wrong→right flips.
+**Gate:** every round is reported, including rounds that didn't help.
+
+### Phase 7: Drift (stretch)
+Build a starter variant against PY2023–2024 only, then load PY2025, which marks changes
+differently (`ADD` appears) and brings new products. Then measure whether the factory adapts
+from flags alone.
+
+### Phase 8: Write-up
+`reports/make_readme_table.py` renders every README table from `reports/results.json`. Add one
+worked example per top trap: the question, the wrong answer, the flag, the curator's PR, and the
+answer after the fix.
+
+**Cut line if time-boxed,** in this order: drift, then factory round 3, then the raw arm.
+**Never cut:** the frozen eval, the held-out set, reconciliation, the curator's no-answers rule,
+or reporting rounds that didn't help.
+
+## 5. Traps
+
+Every question is tagged with the trap it targets, and the taxonomy uses the same tags.
+
+| Tag | Trap | Example |
 |---|---|---|
-| `GRAIN` | rows vs payments (`Number_of_Payments_Included_in_Total_Amount`) vs distinct recipients | "How many payments did NPs receive in 2024?" |
-| `REPUB` | republished or changed records double-counted across cycles | "Total general payments in PY2023" (after a refresh) |
-| `WIDE` | products 1–5 and specialties 1–6 in wide columns; agents read only column 1 | "Total paid in connection with drug X" |
-| `RTYPE` | physician vs NPP vs teaching hospital; NPPs only covered since PY2021 | "Share of payments to non-physicians" |
-| `FILES` | General vs Research vs Ownership, double-counted or missed | "All money from manufacturer M to Dr. Y" |
-| `ENTITY` | manufacturer name variants, Profile ID vs NPI | "Top 5 manufacturers by payments to cardiologists" |
-| `TIME` | program year vs `Date_of_Payment`; dispute and delay flags | "Payments made in Q4 2024" |
-| `PAGE` | API pagination limits (500-row cap, NPPES skip clamp at 1000) | "How many cardiologists in CA got >$10k?" |
-| `TAXON` | pipe-delimited specialty strings vs NPPES taxonomy codes | "Payments to interventional cardiologists" |
+| `GRAIN` | Rows vs payments vs distinct recipients | "How many payments did NPs receive in 2024?" |
+| `REPUB` | Republished records double-counted (only if a second release is loaded) | "Total general payments in PY2023" |
+| `WIDE` | Products 1–5 and specialties 1–6 sit in separate columns; agents read only the first | "Total paid in connection with Ozempic" |
+| `RTYPE` | Physicians vs NPPs vs teaching hospitals | "Share of payments to non-physicians" |
+| `FILES` | General vs Research vs Ownership, missed or double-counted | "All money from company M to Dr. Y" |
+| `ENTITY` | Company families and name variants; Profile ID vs NPI | "How much did J&J companies pay?" |
+| `TIME` | Program year vs `Date_of_Payment`; dispute and delay flags | "Payments made in Q4 2024" |
+| `TAXON` | Pipe-delimited specialty strings vs NPPES taxonomy codes | "Payments to interventional cardiologists" |
+| `SUPPR` | Part D rows under 11 claims are missing; a missing row isn't zero | "How many paid consultants never prescribed the drug?" |
 
-Aim for 5–6 questions per tag, split proportionally between dev and held-out, so the held-out set covers every trap.
+## 6. Measurement
 
----
+- **Right or wrong:** a question counts as right for an arm if it's right in at least 2 of 3 runs.
+- **Flips (the headline):** for each pair of arms, on held-out, count wrong→right and right→wrong.
+  Comparing the same questions before and after is more trustworthy than comparing two
+  percentages at this sample size.
+- **Gap closed** on held-out = (factory − starter) ÷ (reference − starter), counted in
+  questions. It's not reported if reference − starter is under 5 questions, because that's too
+  small to divide by.
+- Results are also reported **per trap**, with the held-out trap on its own.
+- **Cost:** agent spend per correct answer and curator spend per round, both from `usage` ×
+  `config/pricing.yml`, plus my logged hours for the reference layer.
+- Accuracy gets a 95% CI by bootstrap over questions.
 
-## 5. Permission model and leak questions
+## 7. Cut (decided 2026-11-26)
 
-Open Payments is public, so the permission boundary has to be designed into a realistic deployment.
+- **Live-API agents (old L1), the API shim, 429 counting and the `PAGE` trap.** Nobody answers
+  aggregate questions by paging an API.
+- **Load test.** It would measure a laptop, not the data layer.
+- **Entity-resolution benchmark.** It fills about 7k blank NPIs out of 16M rows, which is off
+  the claim.
+- **Permission-leak personas.** Access control belongs to the database (RBAC), not to agent
+  instructions.
 
-- **`mfr_<id>` (client persona):** sees its own manufacturer's records at row level. Competitors appear only in aggregates with a minimum group size of 11 recipients.
-- **`public`:** aggregates only, no recipient-level rows.
-- **`admin`:** everything, plus a synthetic `crm_territory` column (clearly labeled synthetic) to test column-level leaks.
+## 8. Decision log
 
-**Enforcement is in DuckDB:** one schema of secured views per persona, and the agent's connection attaches only that schema. MetricFlow reads through the same views. L1/L2 get the persona rules **in the prompt only**, which is how most teams do it, and the leak column shows the difference.
+- 2026-11-26: Pivot from "four context levels" to "measured knowledge factory" (§2–§3). The
+  cuts are in §7.
+- 2026-11-26: Added Medicare Part D 2023–2024 (§1) and 15 compliance and fraud-signal
+  questions (§9). 14 went into the draft eval as q051–q064, adding the `SUPPR` trap. One is held
+  back because it needs a clinical judgment seed. The draft pool is now 64; Phase 3 still picks
+  30 dev and 20 held-out, and `SUPPR` needs at least 2 held-out questions like every trap.
 
-Leak questions ask for a competitor's recipient-level rows, an aggregate below the minimum group size, the `crm_territory` column, and an indirect re-identification ("the only cardiologist in ZIP X"). A leak is any disallowed value in the answer or in a tool result the agent quotes.
+## 9. Compliance and fraud-signal questions
 
----
+The 50 original drafts mostly total and rank money, like the journalism they were modeled on.
+These 15 ask what a company's compliance team would check before a regulator or a
+whistleblower's lawyer does. Each is a red flag drawn from the OIG's 2020 Special Fraud Alert
+on speaker programs or from past Justice Department settlements.
 
-## 6. Measuring 429s without hammering a public API
+**Rule:** a red flag becomes an eval question only when its definition fixes one right answer
+(for example, "records dated after the NPI's deactivation date"). Whether any flagged payment
+is improper is never graded, because the data can't say. No public list of "fraudulent
+payments" exists to grade against; the closest, the OIG exclusion list (LEIE), isn't loaded.
 
-Neither CMS API publishes a rate limit or returns rate-limit headers. Running 100 concurrent agents against them would mostly measure their CDN, and it isn't a polite thing to do to a public service.
+| # | Red flag | Example | Data | Draft |
+|---|---|---|---|---|
+| 1 | The same doctors give paid talks over and over | One doctor paid for 40 talks by one company in a year | General | q051 |
+| 2 | Speaker fees above what peers pay | $5,000 a talk where others pay $2,500 | General | q052 |
+| 3 | The same doctors fed again and again | 60 meals from one company in a year | General | q053 |
+| 4 | Travel to destinations abroad | Lodging in another country for a "meeting" | General | q054 |
+| 5 | Payments to specialties outside the product's approved use | A cancer drug paying psychiatrists | General + a product-to-specialty seed | **held back** |
+| 6 | Payments to an NPI already deactivated | Paid in March 2025, deactivated in 2024 | General + NPPES | q055 |
+| 7 | Royalties plus ownership in the same company | A surgeon who owns part of the company that pays them royalties | General + Ownership | q056 |
+| 8 | "Research" with no registered trial | Clinical research money with no ClinicalTrials.gov ID | Research | q057 |
+| 9 | Money routed through a third party | A payment to an entity instead of the doctor | General | q058 |
+| 10 | Messier reporting than peers | A company that resubmits nearly all of a year's records | General | q059 |
+| 11 | Paid doctors prescribe more of the product | Paid vs unpaid Ozempic prescribers in Medicare | General + Part D | q060 |
+| 12 | Speakers picked because they already prescribe a lot | Speakers in the top 10% of prescribers the year before | General + Part D | q061 |
+| 13 | Paid consultants who barely use the product | $5,000+ for consulting or speaking, no Part D row for the drug | General + Part D | q062 |
+| 14 | Prescribing rises after the first payment | Change in Mounjaro claims, first paid in 2024 vs never paid | General + Part D | q063 |
+| 15 | Per-prescriber rows don't add up to the national total | Ozempic claims missing because of the 11-claim cutoff | Part D | q064 |
 
-- `agents/tools/api_shim.py` is a local proxy that **records** real responses once (sequential, throttled), then **replays** them behind a token bucket. The default is openFDA's documented 240/min, and the limit is configurable.
-- The README states that 429s are measured against the shim with a documented limit, and gives the limit.
-- One small, sequential real-API run at L1 confirms that shim accuracy matches live accuracy.
+**Why #5 is held back:** "outside the approved use" needs a map from each product's therapeutic
+area to the specialties that legitimately treat it. That's a clinical judgment, for instance
+dermatologists do treat melanoma, so a cancer drug paying them isn't a red flag. Add it only
+with a seed a clinician has reviewed.
 
----
+**Checked against the data (2026-11-26):** each question returns a non-trivial answer. Two
+first versions didn't and were reworded: PY2024 has only 327 disputed records in total, so #10
+uses changed records instead; and only one physician got $10,000+ in Ozempic consulting, so #13
+uses $5,000+ for consulting or speaking.
 
-## 7. Metric definitions (put these in the README too)
-
-- **Accuracy:** share of the 50 questions answered correctly, averaged over 3 runs. 95% CI by bootstrap over questions.
-- **Cost per correct answer:** total Anthropic spend for the level (from `usage` × `config/pricing.yml`, cache reads included) divided by the number of correct answers.
-- **p95 latency:** per tool call (the data layer I own) and end to end, reported separately.
-- **429s:** per 1,000 tool calls, split by source.
-- **Held-out accuracy:** on 20 questions the curator never sees in any form. At n=20 the CI is about ±20 points, so read rounds as a trend and not as a precise number.
+**Limits stated once:** Part D covers Medicare patients and 2023–2024 only, and rows under 11
+claims are missing, so #11–#14 compare prescribers with 11+ claims. Year-level data can't show
+whether prescribing rose before or after a payment within the same year.

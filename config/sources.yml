@@ -24,7 +24,7 @@ open_payments:
     general:   {title: "General Payment Data",   table: op_general}
     research:  {title: "Research Payment Data",  table: op_research}
     ownership: {title: "Ownership Payment Data", table: op_ownership}
-  delete_raw_after_load: false   # flip to true once the Phase 1 gate passes
+  delete_raw_after_load: true    # Phase 1 gate passed 2026-11-26; bronze is the record
   expected:
     max_page_size: 500
 
@@ -38,7 +38,7 @@ part_d:
     prescriber_drug: {title: "Medicare Part D Prescribers - by Provider and Drug",  table: partd_prescriber_drug}
     prescriber:      {title: "Medicare Part D Prescribers - by Provider",           table: partd_prescriber}
     geo_drug:        {title: "Medicare Part D Prescribers - by Geography and Drug", table: partd_geo_drug}
-  delete_raw_after_load: false
+  delete_raw_after_load: true
 
 nppes:
   index_url: https://download.cms.gov/nppes/NPI_Files.html
@@ -49,7 +49,7 @@ nppes:
     pl_pfile:        nppes_practice_location
     othername_pfile: nppes_other_name
     endpoint_pfile:  nppes_endpoint
-  delete_raw_after_load: false
+  delete_raw_after_load: true
   expected:
     api_max_limit: 200
     api_skip_clamp: 1000

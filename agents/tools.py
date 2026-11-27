@@ -146,6 +146,10 @@ class SqlTool:
                     )
 
     def run(self, sql: str, *, checked: bool = True) -> str:
+        return format_rows(*self.fetch(sql, checked=checked), self.limits)
+
+    def fetch(self, sql: str, *, checked: bool = True) -> tuple[list[str], list[tuple], bool]:
+        """Columns, at most max_rows rows, and whether there were more."""
         if checked:
             self.check(sql)
         timer = threading.Timer(self.limits.timeout_s, self.con.interrupt)
@@ -153,7 +157,7 @@ class SqlTool:
         try:
             cur = self.con.execute(sql)
             if cur.description is None:
-                return "(no result set)"
+                return ["result"], [("(no result set)",)], False
             cols = [d[0] for d in cur.description]
             rows = cur.fetchmany(self.limits.max_rows + 1)
         except duckdb.InterruptException:
@@ -164,11 +168,77 @@ class SqlTool:
             raise ToolError(f"{type(e).__name__}: {e}") from None
         finally:
             timer.cancel()
-        more = len(rows) > self.limits.max_rows
-        return format_rows(cols, rows[: self.limits.max_rows], more, self.limits)
+        return cols, rows[: self.limits.max_rows], len(rows) > self.limits.max_rows
 
     def close(self) -> None:
         self.con.close()
+
+
+_IDENT = re.compile(r"[A-Za-z_]\w*")
+
+
+class TableDocs:
+    """Descriptions of a layer's tables and columns, for DESCRIBE and SHOW TABLES.
+
+    Two sources: dbt's model and column docs (`manifest.json`, optional), and the semantic YAML,
+    where each dimension, entity and measure describes the column it reads. Agents mostly write
+    SQL on the tables, so knowledge kept only in metric YAML would otherwise go unread.
+    """
+
+    def __init__(
+        self, semantic_manifest_path: str | Path, dbt_manifest_path: str | Path | None = None
+    ) -> None:
+        self.tables: dict[tuple[str, str], list[str]] = {}
+        self.columns: dict[tuple[str, str], dict[str, list[str]]] = {}
+        if dbt_manifest_path and Path(dbt_manifest_path).exists():
+            for n in json.loads(Path(dbt_manifest_path).read_text())["nodes"].values():
+                if n["resource_type"] != "model":
+                    continue
+                key = (n["schema"].lower(), (n.get("alias") or n["name"]).lower())
+                self._add(self.tables.setdefault(key, []), n.get("description"))
+                for c in n.get("columns", {}).values():
+                    self._col(key, c["name"], c.get("description"))
+        # The raw JSON, not MetricFlow's parsed manifest: parsing rewrites count measures into
+        # sum(CASE ...), which would hide the column they count.
+        for sm in json.loads(Path(semantic_manifest_path).read_text())["semantic_models"]:
+            rel = sm["node_relation"]
+            key = (rel["schema_name"].lower(), rel["alias"].lower())
+            label = f"Semantic model {sm['name']}: {sm.get('description') or ''}"
+            self._add(self.tables.setdefault(key, []), label)
+            for kind, group in (
+                ("dimension", "dimensions"),
+                ("entity", "entities"),
+                ("measure", "measures"),
+            ):
+                for d in sm.get(group) or []:
+                    agg = f" ({d['agg']})" if kind == "measure" else ""
+                    desc = f"{kind} {d['name']}{agg}: {d.get('description') or ''}"
+                    self._col(key, d.get("expr") or d["name"], desc)
+
+    @staticmethod
+    def _add(out: list[str], text: str | None) -> None:
+        text = " ".join((text or "").split()).rstrip(": ")
+        if text and text not in out:
+            out.append(text)
+
+    def _col(self, key: tuple[str, str], expr: str, text: str | None) -> None:
+        if _IDENT.fullmatch(expr.strip()):  # computed expressions don't name one column
+            self._add(self.columns.setdefault(key, {}).setdefault(expr.strip().lower(), []), text)
+
+    def resolve(self, parts: list[str], schemas: list[str]) -> tuple[str, str] | None:
+        """(schema, table) for a possibly unqualified name, searching gold first."""
+        if len(parts) >= 2:
+            return parts[-2], parts[-1]
+        for s in sorted(schemas, key=lambda s: s != "gold"):
+            if (s, parts[-1]) in self.tables or (s, parts[-1]) in self.columns:
+                return s, parts[-1]
+        return None
+
+    def table(self, key: tuple[str, str] | None) -> str:
+        return "; ".join(self.tables.get(key, [])) if key else ""
+
+    def column(self, key: tuple[str, str] | None, name: str) -> str:
+        return "; ".join(self.columns.get(key, {}).get(str(name).lower(), [])) if key else ""
 
 
 @lru_cache(maxsize=64)

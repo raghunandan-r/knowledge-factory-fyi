@@ -1,0 +1,5 @@
+# The other dev drafts that can run before the freeze: no seed needed, not REPUB.
+# Not part of the Phase 2 pilot (eval/pilot.yaml); run to see the starter's error rate on
+# every usable dev question. Held-out drafts never run before eval-v1.
+pilot_id: dev-rest-v1
+questions: [q014, q020, q023, q031, q036, q037, q042, q053, q057]

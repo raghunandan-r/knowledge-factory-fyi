@@ -14,6 +14,8 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import os
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,7 +24,16 @@ from typing import Any
 import yaml
 
 from agents.shapes import answer_schema, parse_shape, validate_answer
-from agents.tools import DocsTool, Limits, MetricLayer, SqlTool, ToolError
+from agents.tools import (
+    DocsTool,
+    Limits,
+    MetricLayer,
+    SqlTool,
+    TableDocs,
+    ToolError,
+    _ident_parts,
+    format_rows,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = ROOT / "config" / "agent.yml"
@@ -31,6 +42,10 @@ PRICING_PATH = ROOT / "config" / "pricing.yml"
 
 def load_config(path: Path = CONFIG_PATH) -> dict[str, Any]:
     cfg = yaml.safe_load(path.read_text())
+    # A smoke test swaps in another model (e.g. through OpenRouter) to exercise the plumbing.
+    # It never counts as a pilot run: its runs and report go under a separate smoke- id.
+    if smoke := os.environ.get("KF_SMOKE_MODEL"):
+        cfg["model"], cfg["smoke"] = smoke, True
     cfg["system_prompt"] = cfg["system_prompt"].replace("{max_turns}", str(cfg["max_turns"]))
     return cfg
 
@@ -66,6 +81,8 @@ def load_pricing(path: Path = PRICING_PATH) -> dict[str, Any]:
 
 
 def cost_usd(usage: dict[str, int], model: str, pricing: dict[str, Any]) -> float:
+    if model not in pricing["models"] and model == os.environ.get("KF_SMOKE_MODEL"):
+        return 0.0  # smoke models aren't priced; the experiment's model must be
     p = pricing["models"][model]
     write_1h = usage.get("cache_write_1h_tokens", 0)
     write_5m = usage.get("cache_creation_input_tokens", 0) - write_1h
@@ -252,10 +269,14 @@ class RawArm(Arm):
         self.db.close()
 
 
-def layer_manifest_path(cfg: dict[str, Any], layer: str) -> Path:
+def layer_manifest_path(cfg: dict[str, Any], layer: str, kind: str = "semantic_manifest") -> Path:
     """A per-layer snapshot (`make layer-manifest`) wins over the live dbt target."""
-    snap = _path(cfg, "layers") / f"{layer}.semantic_manifest.json"
-    return snap if snap.exists() else _path(cfg, "dbt_manifest")
+    snap = _path(cfg, "layers") / f"{layer}.{kind}.json"
+    return snap if snap.exists() else _path(cfg, "dbt_manifest").with_name(f"{kind}.json")
+
+
+_DESCRIBE = re.compile(r"^\s*(?:DESCRIBE|DESC)\s+(?:TABLE\s+)?([\w\".]+)\s*;?\s*$", re.IGNORECASE)
+_SHOW_TABLES = re.compile(r"^\s*(?:SHOW\s+(?:ALL\s+)?TABLES|DESCRIBE)\s*;?\s*$", re.IGNORECASE)
 
 
 class LayerArm(Arm):
@@ -268,11 +289,16 @@ class LayerArm(Arm):
         *,
         db_path: Path | None = None,
         manifest_path: Path | None = None,
+        dbt_manifest_path: Path | None = None,
     ) -> None:
         self.name = layer
         self.limits = limits_from(cfg)
         self.last_compiled_sql: str | None = None
-        self.layer = MetricLayer(manifest_path or layer_manifest_path(cfg, layer), self.limits)
+        manifest_path = manifest_path or layer_manifest_path(cfg, layer)
+        self.layer = MetricLayer(manifest_path, self.limits)
+        self.docs = TableDocs(
+            manifest_path, dbt_manifest_path or layer_manifest_path(cfg, layer, "manifest")
+        )
         dbs = self.layer.databases
         if len(dbs) > 1:
             raise ValueError(f"layer {layer!r} spans several databases: {sorted(dbs)}")
@@ -336,7 +362,8 @@ class LayerArm(Arm):
                 "Run one read-only DuckDB SQL query against the semantic layer's own tables "
                 f"(schemas: {', '.join(self.db.schemas)}; unqualified names resolve to gold if "
                 "it exists). Explore with SHOW ALL TABLES, DESCRIBE <schema>.<table> or "
-                "information_schema.columns.",
+                "information_schema.columns. SHOW TABLES and DESCRIBE <table> also show the "
+                "layer's description of each table and column.",
                 self.limits,
             ),
         ]
@@ -358,8 +385,28 @@ class LayerArm(Arm):
             result = self.db.run(sql, checked=False)
             return f"{result}\n\n-- SQL:\n{sql}" if args.get("show_sql") else result
         if tool == "sql":
-            return self.db.run(args["query"])
+            return self._sql(args["query"])
         raise ToolError(f"Unknown tool {tool!r}")
+
+    def _sql(self, query: str) -> str:
+        describe, show = _DESCRIBE.match(query), _SHOW_TABLES.match(query)
+        if not (describe or show):
+            return self.db.run(query)
+        cols, rows, more = self.db.fetch(query)
+        if describe:
+            key = self.docs.resolve(_ident_parts(describe.group(1)), self.db.schemas)
+            rows = [(*r, self.docs.column(key, r[0])) for r in rows]
+            head = f"-- {'.'.join(key)}: {self.docs.table(key)}\n" if self.docs.table(key) else ""
+        else:
+            name, schema = cols.index("name"), cols.index("schema") if "schema" in cols else None
+
+            def table_desc(r: tuple) -> str:
+                parts = [r[name]] if schema is None else [r[schema], r[name]]
+                return self.docs.table(self.docs.resolve(parts, self.db.schemas))
+
+            rows = [(*r, table_desc(r)) for r in rows]
+            head = ""
+        return head + format_rows([*cols, "description"], rows, more, self.limits)
 
     def close(self) -> None:
         self.db.close()
@@ -465,6 +512,10 @@ def run_question(
         "output_config": {"effort": cfg["effort"]},
         "cache_control": {"type": "ephemeral"},  # automatic breakpoint on the growing tail
     }
+    if cfg.get("smoke"):  # Claude-only settings another model may reject
+        for k in ("thinking", "output_config", "cache_control"):
+            params.pop(k)
+        system[0].pop("cache_control")
     st = RunState()
     trace = Trace(trace_path)
     trace.write(

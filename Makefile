@@ -1,7 +1,7 @@
 .PHONY: setup probe sync sync-op sync-nppes sync-partd sync-summary sync-check verify test lint fmt check
 
--include .env      # ANTHROPIC_API_KEY for make pilot (gitignored)
-export ANTHROPIC_API_KEY
+-include .env      # API settings for make pilot (gitignored); see .env.example
+export ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL KF_SMOKE_MODEL
 
 UV := PYTHONUNBUFFERED=1 uv run  # stream progress into logs as it happens
 
@@ -77,10 +77,11 @@ gold:             ## (re)compute gold results from eval/gold_sql into data/gold_
 pilot:            ## make pilot ARM=raw|starter RUNS=3 [PILOT_ARGS="--limit 2 --dry-run"]
 	$(UV) --extra transform python -m agents.pilot run --arm $(ARM) --runs $(RUNS) $(PILOT_ARGS)
 
-pilot-report:     ## grade every pilot run into reports/pilot.json
-	$(UV) python -m agents.pilot report
+pilot-report:     ## grade every pilot run into reports/pilot.json [PILOT_ARGS="--pilot eval/dev_rest.yaml"]
+	$(UV) python -m agents.pilot report $(PILOT_ARGS)
 
-layer-manifest:   ## snapshot dbt's semantic manifest for LAYER into data/layers
+layer-manifest:   ## snapshot dbt's semantic manifest and model docs for LAYER into data/layers
 	$(DBT) parse --project-dir dbt --quiet
 	mkdir -p data/layers
 	cp dbt/target/semantic_manifest.json data/layers/$(LAYER).semantic_manifest.json
+	cp dbt/target/manifest.json data/layers/$(LAYER).manifest.json

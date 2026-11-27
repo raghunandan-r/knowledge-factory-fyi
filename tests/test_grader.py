@@ -79,10 +79,13 @@ def test_validate_answer():
 @pytest.mark.parametrize(
     ("got", "exp", "ok"),
     [
-        (100.5, 100.0, True),  # exactly 0.5%
-        (99.5, 100.0, True),
-        (100.51, 100.0, False),
-        (99.49, 100.0, False),
+        (173.12, 173.11, True),  # to the cent
+        (173.76, 173.11, False),  # q002: a median by NPI, 0.38% off, is a different method
+        (64.75, 64.7523, True),  # a percent rounded to 2 places
+        (40.56, 40.57, True),  # float noise at exactly one cent
+        (40.55, 40.57, False),
+        (679244407, 679244407.11, True),  # to the dollar from 1,000 up
+        (679244408.5, 679244407.11, False),
         (0, 0, True),
         (0.0001, 0, False),  # a gold zero needs an exact zero
         ("1,234.5", 1234.5, True),  # stray formatting is forgiven
@@ -97,9 +100,26 @@ def test_number_tolerance(got, exp, ok):
     assert compare_scalar("number", got, exp)[0] is ok
 
 
-def test_ints_use_the_same_tolerance():
-    assert compare_scalar("int", 1004, 1000)[0]
-    assert not compare_scalar("int", 1006, 1000)[0]
+def test_ints_match_exactly():
+    assert compare_scalar("int", 2350691, 2350691)[0]
+    assert compare_scalar("int", "2,350,691", 2350691)[0]
+    assert not compare_scalar("int", 2350692, 2350691)[0]
+
+
+def test_per_question_relative_tolerance():
+    assert compare_scalar("int", 1004, 1000, 0.005)[0]
+    assert not compare_scalar("int", 1006, 1000, 0.005)[0]
+    shape = {"records": "int", "usd": "number"}
+    gold = {"records": 1000, "usd": 5000.0}
+    answer = {"records": 1000, "usd": 5010.0}
+    assert not grade(answer, gold, shape)["correct"]
+    assert grade(answer, gold, shape, {"usd": 0.005})["correct"]
+    table = {"table": [{"program_year": 2023, "usd": 10.0}]}
+    got = {"table": [{"program_year": 2023, "usd": 10.04}]}
+    assert grade(got, table, TABLE, {"usd": 0.005})["correct"]
+    # keys stay exact under a tolerance
+    got = {"table": [{"program_year": 2024, "usd": 10.0}]}
+    assert not grade(got, table, TABLE, {"program_year": 0.5})["correct"]
 
 
 @pytest.mark.parametrize(
@@ -139,7 +159,7 @@ def test_string_alternatives_from_gold_lists():
 def test_scalar_dict_every_key_must_be_right():
     shape = {"records": "int", "usd": "number"}
     gold = {"records": 1000, "usd": 5000.0}
-    assert grade({"records": 1000, "usd": 5010.0}, gold, shape)["correct"]
+    assert grade({"records": 1000, "usd": 5000.4}, gold, shape)["correct"]
     v = grade({"records": 1000, "usd": 6000.0}, gold, shape)
     assert (
         not v["correct"] and v["fields"]["records"]["correct"] and not v["fields"]["usd"]["correct"]
@@ -158,7 +178,7 @@ def test_scalar_with_name_alternatives():
         "top_usd": 5e7,
     }
     assert grade(
-        {"usd_total": 1.001e9, "top_hospital": "Hospital Of The Univ Of Penna", "top_usd": 5e7},
+        {"usd_total": 1e9 + 0.5, "top_hospital": "Hospital Of The Univ Of Penna", "top_usd": 5e7},
         gold,
         shape,
     )["correct"]
@@ -180,7 +200,7 @@ def test_ranked():
         )
     }
     assert grade(
-        {"ranked": _ranked(("AbbVie", 300), ("Pfizer", 200.5), ("MERCK", 100))}, gold, RANKED
+        {"ranked": _ranked(("AbbVie", 300), ("Pfizer", 200.01), ("MERCK", 100))}, gold, RANKED
     )["correct"]
     v = grade({"ranked": _ranked(("Pfizer", 200), ("AbbVie", 300), ("Merck", 100))}, gold, RANKED)
     assert not v["correct"] and "#1 company" in v["fields"]["ranked"]["reason"]
@@ -197,7 +217,7 @@ def test_ranked():
 
 def test_table_matches_rows_in_any_order():
     gold = {"table": [{"program_year": 2023, "usd": 10.0}, {"program_year": 2024, "usd": 20.0}]}
-    got = {"table": [{"program_year": 2024, "usd": 20.05}, {"program_year": 2023, "usd": 10.0}]}
+    got = {"table": [{"program_year": 2024, "usd": 20.01}, {"program_year": 2023, "usd": 10.0}]}
     assert grade(got, gold, TABLE)["correct"]
     v = grade(
         {"table": [{"program_year": 2023, "usd": 10.0}, {"program_year": 2025, "usd": 20.0}]},
@@ -220,8 +240,8 @@ def test_table_with_str_keys_and_alternatives():
     }
     got = {
         "table": [
-            {"group": "Unpaid", "prescribers": 901, "avg_claims": 20.0},
-            {"group": "Paid prescribers", "prescribers": 100, "avg_claims": 50.1},
+            {"group": "Unpaid", "prescribers": 900, "avg_claims": 20.0},
+            {"group": "Paid prescribers", "prescribers": 100, "avg_claims": 50.01},
         ]
     }
     assert grade(got, gold, TABLE_STR)["correct"]

@@ -22,8 +22,8 @@ duckdb:                  # per run; 4 runs in parallel on a 32 GB laptop
 paths:
   warehouse: data/warehouse.duckdb
   docs: data/docs/text
-  layers: data/layers          # <layer>.duckdb and <layer>.semantic_manifest.json
-  dbt_manifest: dbt/target/semantic_manifest.json   # fallback when no snapshot exists
+  layers: data/layers          # <layer>.duckdb, <layer>.semantic_manifest.json, <layer>.manifest.json
+  dbt_manifest: dbt/target/semantic_manifest.json   # fallback when no snapshot exists (manifest.json beside it)
   runs: data/runs
   questions: eval/questions    # every *.yaml except leaks_*.yaml
 

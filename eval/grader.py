@@ -16,9 +16,12 @@ Gold SQL convention (`eval/gold_sql/<qid>.sql`, run read-only against bronze):
   list's rows as above; a part named after a scalar key returns one row and fills every scalar
   key among its columns. A shape whose keys are all scalars needs no parts.
 
-Comparison (PLAN.md §6): numbers, ints included, within ±0.5% relative, and a gold 0 needs an
-exact 0. Percents are numbers in 0-100 units. Strings compare after casefolding, dropping
-punctuation, collapsing whitespace and stripping company suffixes (Inc, LLC, Corp, ...). Sets
+Comparison (PLAN.md §6): ints match exactly. Other numbers match to the cent (±0.01), or to
+the dollar (±1) when gold is 1,000 or more, so rounding passes but a different method doesn't.
+A question's optional ``tolerance: {<key or column>: <relative>}`` overrides this for answers
+that are approximate by nature. Percents are numbers in 0-100 units. Strings compare after
+casefolding, dropping punctuation, collapsing whitespace and stripping company suffixes (Inc,
+LLC, Corp, ...). Sets
 compare as sets; ranked answers need the top k names in order with their numbers in tolerance;
 tables need the same rows. Every key must be right for the answer to be right.
 
@@ -47,7 +50,8 @@ ROOT = Path(__file__).resolve().parent.parent
 GOLD_SQL_DIR = ROOT / "eval" / "gold_sql"
 GOLD_DIR = ROOT / "data" / "gold_results"
 WAREHOUSE = ROOT / "data" / "warehouse.duckdb"
-REL_TOL = 0.005
+ABS_TOL, ABS_TOL_LARGE, LARGE = 0.01, 1.0, 1000
+_EPS = 1e-9  # float noise: 40.57 - 40.56 is 0.0100000000000016
 
 _PART = re.compile(r"^\s*--\s*part:\s*(\w+)\s*$", re.MULTILINE)
 
@@ -234,7 +238,7 @@ def _num(v: Any) -> float | None:
         return None
 
 
-def compare_scalar(kind: str, got: Any, exp: Any) -> tuple[bool, str]:
+def compare_scalar(kind: str, got: Any, exp: Any, rel_tol: float | None = None) -> tuple[bool, str]:
     if kind == "str":
         alts = exp if isinstance(exp, list) else [exp]
         if got is None:
@@ -248,25 +252,33 @@ def compare_scalar(kind: str, got: Any, exp: Any) -> tuple[bool, str]:
         return False, f"gold value is {exp!r}, not a number"
     if g is None:
         return False, f"expected {exp}, got {got!r}"
+    diff = abs(g - e)
     if e == 0:
         return (g == 0), ("match" if g == 0 else f"expected exactly 0, got {got}")
-    rel = abs(g - e) / abs(e)
-    if rel <= REL_TOL:
-        return True, f"within {rel:.3%}"
-    return False, f"expected {exp}, got {got} (off by {rel:.2%})"
+    if rel_tol is not None:
+        ok = diff <= rel_tol * abs(e) + _EPS
+    elif kind == "int":
+        ok = g == e
+    else:
+        ok = diff <= (ABS_TOL_LARGE if abs(e) >= LARGE else ABS_TOL) + _EPS
+    if ok:
+        return True, "match" if diff == 0 else f"within {diff:.4g}"
+    return False, f"expected {exp}, got {got} (off by {diff / abs(e):.2%})"
 
 
-def _compare_item(f: Field, got: dict[str, Any], exp: dict[str, Any]) -> list[str]:
+def _compare_item(
+    f: Field, got: dict[str, Any], exp: dict[str, Any], tol: dict[str, float]
+) -> list[str]:
     errs = []
     for c, t in f.item:
-        ok, why = compare_scalar(t, got.get(c), exp.get(c))
+        ok, why = compare_scalar(t, got.get(c), exp.get(c), tol.get(c))
         if not ok:
             errs.append(f"{c}: {why}")
     return errs
 
 
 def _key_match(f: Field, got: dict[str, Any], exp: dict[str, Any]) -> bool:
-    """Keys match exactly: 2023 must not pass for 2024 under the ±0.5% number tolerance."""
+    """Keys match exactly, even under a per-question tolerance: 2023 never passes for 2024."""
     types = dict(f.item)
     for c in f.key_columns:
         if types[c] == "str":
@@ -277,9 +289,12 @@ def _key_match(f: Field, got: dict[str, Any], exp: dict[str, Any]) -> bool:
     return True
 
 
-def compare_field(f: Field, got: Any, exp: Any) -> tuple[bool, str]:
+def compare_field(
+    f: Field, got: Any, exp: Any, tol: dict[str, float] | None = None
+) -> tuple[bool, str]:
+    tol = tol or {}
     if f.kind in SCALARS:
-        return compare_scalar(f.kind, got, exp)
+        return compare_scalar(f.kind, got, exp, tol.get(f.key))
     if not isinstance(got, list):
         return False, f"expected a list, got {type(got).__name__}"
     if f.kind == "set":
@@ -294,7 +309,7 @@ def compare_field(f: Field, got: Any, exp: Any) -> tuple[bool, str]:
         errs = []
         for i in range(k):
             gi = got[i] if isinstance(got[i], dict) else {}
-            errs += [f"#{i + 1} {e}" for e in _compare_item(f, gi, exp[i])]
+            errs += [f"#{i + 1} {e}" for e in _compare_item(f, gi, exp[i], tol)]
         return (not errs), (f"top {k} match" if not errs else "; ".join(errs))
     # table
     rows = [r for r in got if isinstance(r, dict)]
@@ -308,11 +323,16 @@ def compare_field(f: Field, got: Any, exp: Any) -> tuple[bool, str]:
             errs.append(f"no row for {label}")
             continue
         used.add(j)
-        errs += [f"{label} {x}" for x in _compare_item(f, rows[j], e)]
+        errs += [f"{label} {x}" for x in _compare_item(f, rows[j], e, tol)]
     return (not errs), (f"all {len(exp)} rows match" if not errs else "; ".join(errs))
 
 
-def grade(answer: Any, gold: dict[str, Any], shape: dict[str, Any]) -> dict[str, Any]:
+def grade(
+    answer: Any,
+    gold: dict[str, Any],
+    shape: dict[str, Any],
+    tolerance: dict[str, float] | None = None,
+) -> dict[str, Any]:
     """Verdict with a reason per answer key; right only if every key is right."""
     fields = parse_shape(shape)
     if not isinstance(answer, dict):
@@ -325,7 +345,7 @@ def grade(answer: Any, gold: dict[str, Any], shape: dict[str, Any]) -> dict[str,
         if f.key not in answer:
             out[f.key] = {"correct": False, "reason": "missing"}
             continue
-        ok, why = compare_field(f, answer[f.key], gold[f.key])
+        ok, why = compare_field(f, answer[f.key], gold[f.key], tolerance)
         out[f.key] = {"correct": ok, "reason": why}
     return {"correct": all(v["correct"] for v in out.values()), "fields": out}
 

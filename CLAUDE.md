@@ -1,8 +1,8 @@
 # knowledge-factory-fyi
 
 The repo measures a knowledge factory: agents flag gaps, a curator agent fixes the semantic
-layer, and the gain is scored on held-out questions. PLAN.md has phases and gates; `index.md`
-maps questions to code. Update `index.md` in the same change as the code it points to.
+layer, and the gain is scored on held-out questions. PLAN.md has phases and gates (local only:
+gitignored, never commit it); `index.md` maps questions to code. Update `index.md` in the same change as the code it points to.
 
 ## Rules that protect the claim
 
@@ -17,7 +17,8 @@ maps questions to code. Update `index.md` in the same change as the code it poin
 - **The starter layer is built from CMS docs only:** whoever edits it never reads `eval/`,
   `PLAN.md` or `README.md`.
 - **The agent's prompt never contains** `expert_note`, `verify`, `traps`, gold SQL or gold results.
-- Changing `config/agent.yml` changes the experiment: log it in PLAN.md §8.
+- Changing `config/agent.yml`, the agents' tools or the grader changes the experiment: log it
+  in PLAN.md §8.
 
 ## Commands
 

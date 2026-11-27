@@ -13,6 +13,7 @@ import argparse
 import datetime as dt
 import json
 import math
+import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -52,6 +53,12 @@ def load_pilot(path: Path = PILOT_PATH) -> tuple[str, list[str]]:
     if isinstance(data, list):
         return path.stem, [str(q) for q in data]
     return str(data.get("pilot_id", path.stem)), [str(q) for q in data["questions"]]
+
+
+def resolve_pilot_id(cfg: dict[str, Any], pilot_id: str) -> str:
+    if not cfg.get("smoke"):
+        return pilot_id
+    return f"smoke-{re.sub(r'[^A-Za-z0-9.-]+', '-', cfg['model'])}-{pilot_id}"
 
 
 def record_path(cfg: dict[str, Any], pilot_id: str, arm: str, run: int, qid: str) -> Path:
@@ -95,7 +102,7 @@ def all_records(cfg: dict[str, Any], pilot_id: str) -> list[dict[str, Any]]:
 def cmd_run(args: argparse.Namespace) -> int:
     cfg, pricing = load_config(), load_pricing()
     pilot_id, qids = load_pilot(Path(args.pilot))
-    pilot_id = args.pilot_id or pilot_id
+    pilot_id = resolve_pilot_id(cfg, args.pilot_id or pilot_id)
     questions = load_questions()
     missing = [q for q in qids if q not in questions]
     if missing:
@@ -179,7 +186,7 @@ def build_report(
         if qid not in qids:
             continue
         verdict = (
-            grade(r["answer"], gold[qid], questions[qid]["answer"])
+            grade(r["answer"], gold[qid], questions[qid]["answer"], questions[qid].get("tolerance"))
             if qid in gold
             else {"correct": None, "fields": {}, "error": gold_errors[qid]}
         )
@@ -295,9 +302,11 @@ def print_summary(rep: dict[str, Any]) -> None:
 def cmd_report(args: argparse.Namespace) -> int:
     cfg = load_config()
     pilot_id, qids = load_pilot(Path(args.pilot))
-    pilot_id = args.pilot_id or pilot_id
+    pilot_id = resolve_pilot_id(cfg, args.pilot_id or pilot_id)
     rep = build_report(cfg, pilot_id, qids, load_questions())
     out = Path(args.out)
+    if cfg.get("smoke"):  # never overwrite the real pilot report
+        out = _path(cfg, "runs") / pilot_id / "report.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(rep, indent=1, default=str))
     print_summary(rep)

@@ -509,7 +509,7 @@ def test_pilot_report(cfg, tmp_path, monkeypatch, capsys):
     (tmp_path / "gold" / "q900.json").write_text(
         json.dumps({"sql_sha256": "x", "answer": {"records": 3, "usd": 400.0}})
     )
-    for k, usd in enumerate([400.0, 401.0, 500.0], start=1):
+    for k, usd in enumerate([400.0, 400.004, 500.0], start=1):
         run_question(
             QUESTION,
             RawArm(cfg),
@@ -543,3 +543,72 @@ def test_real_pilot_questions_build_tools():
     for qid in pilot.load_pilot()[1]:
         spec = harness.submit_answer_spec(qs[qid]["answer"])
         assert spec["input_schema"]["properties"]["answer"]["required"]
+
+
+def test_smoke_model_is_kept_apart_from_the_pilot(cfg, monkeypatch):
+    from agents.harness import load_config as fresh_config
+    from agents.pilot import resolve_pilot_id
+
+    monkeypatch.delenv("KF_SMOKE_MODEL", raising=False)
+    assert not fresh_config().get("smoke")
+    monkeypatch.setenv("KF_SMOKE_MODEL", "particle-ai/particle-1:free")
+    smoke = fresh_config()
+    assert smoke["model"] == "particle-ai/particle-1:free" and smoke["smoke"]
+    assert resolve_pilot_id(smoke, "pilot-v1") == "smoke-particle-ai-particle-1-free-pilot-v1"
+
+    cfg.update(model=smoke["model"], smoke=True)
+    rec, client = run(cfg, [msg(tool("submit_answer", **GOOD))])
+    call = client.calls[0]
+    assert call["model"] == "particle-ai/particle-1:free"
+    for claude_only in ("thinking", "output_config", "cache_control"):
+        assert claude_only not in call
+    assert "cache_control" not in call["system"][0]
+    assert rec["stop_reason"] == "submitted" and rec["cost_usd"] == 0.0
+
+
+def test_layer_describe_and_show_tables_carry_descriptions(cfg, layer_db, tmp_path):
+    dbt_manifest = tmp_path / "manifest.json"
+    dbt_manifest.write_text(
+        json.dumps(
+            {
+                "nodes": {
+                    "model.toy.payments": {
+                        "resource_type": "model",
+                        "name": "payments",
+                        "schema": "gold",
+                        "alias": "payments",
+                        "description": "Toy payments, one row per record.",
+                        "columns": {"amount_usd": {"name": "amount_usd", "description": "USD."}},
+                    }
+                }
+            }
+        )
+    )
+    arm = LayerArm(
+        cfg, "toy", db_path=layer_db, manifest_path=MANIFEST, dbt_manifest_path=dbt_manifest
+    )
+    out = arm.call("sql", {"query": "DESCRIBE payments"})
+    head, cols, *rows = out.splitlines()
+    assert head == (
+        "-- gold.payments: Toy payments, one row per record.; "
+        "Semantic model payments: One row per toy payment record."
+    )
+    assert cols.endswith("| description")
+    by_col = {r.split(" | ")[0]: r.split(" | ")[-1] for r in rows}
+    assert by_col["amount_usd"] == "USD.; measure amount_usd (sum): Sum of payment amounts in USD."
+    assert by_col["recipient_type"].startswith("dimension recipient_type: Physician")
+    assert (
+        "entity payment" in by_col["payment_id"]
+        and "measure payment_records" in by_col["payment_id"]
+    )
+    shown = arm.call("sql", {"query": "show all tables"})
+    assert "Semantic model payments" in shown and shown.splitlines()[0].endswith("description")
+    assert "Semantic model payments" in arm.call("sql", {"query": "SHOW TABLES;"})
+    assert "description" not in arm.call("sql", {"query": "select 1 as x"})
+    arm.close()
+    # without a dbt manifest the semantic YAML alone still describes the columns
+    arm = LayerArm(
+        cfg, "toy", db_path=layer_db, manifest_path=MANIFEST, dbt_manifest_path=tmp_path / "none"
+    )
+    assert "measure amount_usd" in arm.call("sql", {"query": "describe gold.payments"})
+    arm.close()

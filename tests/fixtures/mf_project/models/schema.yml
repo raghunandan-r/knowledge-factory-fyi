@@ -1,0 +1,59 @@
+models:
+  - name: all_days
+    description: Time spine, one row per day.
+    time_spine:
+      standard_granularity_column: date_day
+    columns:
+      - name: date_day
+        granularity: day
+
+semantic_models:
+  - name: payments
+    description: One row per toy payment record.
+    model: ref('payments')
+    defaults:
+      agg_time_dimension: paid_date
+    entities:
+      - name: payment
+        type: primary
+        expr: payment_id
+    dimensions:
+      - name: paid_date
+        type: time
+        type_params:
+          time_granularity: day
+      - name: program_year
+        type: categorical
+        description: Reporting year of the record.
+      - name: recipient_type
+        type: categorical
+        description: Physician or a non-physician practitioner type.
+    measures:
+      - name: amount_usd
+        description: Sum of payment amounts in USD.
+        agg: sum
+      - name: payment_records
+        description: Count of payment records.
+        agg: count
+        expr: payment_id
+
+metrics:
+  - name: total_usd
+    label: Total USD
+    description: Total dollars paid, all records.
+    type: simple
+    type_params:
+      measure: amount_usd
+  - name: records
+    label: Records
+    description: Number of payment records (rows), not individual payments.
+    type: simple
+    type_params:
+      measure: payment_records
+  - name: usd_per_record
+    label: USD per record
+    description: Average dollars per record.
+    type: ratio
+    type_params:
+      numerator: total_usd
+      denominator: records

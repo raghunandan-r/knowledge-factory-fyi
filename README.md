@@ -57,7 +57,7 @@ Wrong held-out answers by root cause ([`eval/taxonomy.md`](eval/taxonomy.md)). T
 
 ## 4. Pilot (run before the eval was frozen)
 
-A small dev-only pilot checked that a week-one semantic layer leaves enough wrong answers for a factory to fix. It's shown so readers can see what was known before freezing. Questions were never dropped one at a time for being answered correctly; any cut was a whole trap, logged in [`PLAN.md`](PLAN.md) §8.
+A small dev-only pilot checked that a week-one semantic layer leaves enough wrong answers for a factory to fix. It's shown so readers can see what was known before freezing. Questions were never dropped one at a time for being answered correctly; any cut was a whole trap, logged with its reason.
 
 | Arm | Pilot questions right | Traps with a wrong answer | Decision |
 |---|---|---|---|
@@ -86,7 +86,7 @@ Source: the CMS national summary file (`PBLCTN_NTNL_SMRY_*`). Payment counts mus
 
 ## Data
 
-CMS Open Payments PY2023–2025 (General, Research, Ownership) and NPPES V.2, loaded from bulk files with a watermark (`meta.sync_state`). Agents never call the CMS APIs. See [`PLAN.md`](PLAN.md) §1 and [`docs/adr/0001-ingest-design.md`](docs/adr/0001-ingest-design.md).
+CMS Open Payments PY2023–2025 (General, Research, Ownership) and NPPES V.2, loaded from bulk files with a watermark (`meta.sync_state`). Agents never call the CMS APIs. See [`docs/adr/0001-ingest-design.md`](docs/adr/0001-ingest-design.md).
 
 ## Run it
 
@@ -94,4 +94,4 @@ CMS Open Payments PY2023–2025 (General, Research, Ownership) and NPPES V.2, lo
 make probe && make sync && make verify
 ```
 
-Later phases add their own targets as they're built ([`PLAN.md`](PLAN.md) §4).
+Later phases add their own targets as they're built.

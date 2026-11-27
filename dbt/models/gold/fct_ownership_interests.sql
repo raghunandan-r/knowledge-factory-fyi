@@ -1,0 +1,26 @@
+-- One row per published physician ownership or investment interest record (Record_ID).
+select
+    record_id,
+    program_year,
+    make_date(program_year, 1, 1) as program_year_start,
+    payment_publication_date as publication_date,
+    change_type,
+    physician_profile_id,
+    physician_npi,
+    physician_first_name,
+    physician_last_name,
+    recipient_city,
+    recipient_state,
+    physician_primary_type,
+    physician_specialty,
+    applicable_manufacturer_or_applicable_gpo_making_payment_id as manufacturer_id,
+    applicable_manufacturer_or_applicable_gpo_making_payment_name as manufacturer_name,
+    applicable_manufacturer_or_applicable_gpo_making_payment_state as manufacturer_state,
+    applicable_manufacturer_or_applicable_gpo_making_payment_country as manufacturer_country,
+    submitting_applicable_manufacturer_or_applicable_gpo_name as submitting_entity_name,
+    total_amount_invested_usdollars as amount_invested_usd,
+    value_of_interest as value_of_interest_usd,
+    terms_of_interest,
+    interest_held_by_physician_or_an_immediate_family_member as interest_held_by,
+    dispute_status_for_publication as dispute_status
+from {{ ref('op_ownership_interests') }}

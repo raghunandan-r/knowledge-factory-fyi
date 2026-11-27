@@ -1,0 +1,7 @@
+kf_fixture:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('KF_FIXTURE_DB', 'toy.duckdb') }}"
+      schema: gold

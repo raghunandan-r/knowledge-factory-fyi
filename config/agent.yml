@@ -1,0 +1,58 @@
+# The agent under test. Every arm runs with exactly these settings; only the tools differ.
+# Changing anything here changes the experiment: record it in PLAN.md §8.
+
+model: claude-opus-5-5
+effort: high             # output_config.effort; Opus 5.5 defaults to medium, so pin it
+thinking_display: summarized   # thinking is always on for Opus 5.5; summaries land in traces
+max_turns: 30            # API requests per question-run
+max_tokens: 64000        # per response (streamed); thinking counts toward it
+last_turn_warning: true  # on the final request, ask for submit_answer instead of more tools
+
+tool_results:
+  max_rows: 200
+  max_chars: 20000
+  max_cell_chars: 500
+sql_timeout_s: 120
+
+duckdb:                  # per run; 4 runs in parallel on a 32 GB laptop
+  memory_limit: 5GB
+  threads: 4
+  temp_directory: data/tmp/agent_spill
+
+paths:
+  warehouse: data/warehouse.duckdb
+  docs: data/docs/text
+  layers: data/layers          # <layer>.duckdb, <layer>.semantic_manifest.json, <layer>.manifest.json
+  dbt_manifest: dbt/target/semantic_manifest.json   # fallback when no snapshot exists (manifest.json beside it)
+  runs: data/runs
+  questions: eval/questions    # every *.yaml except leaks_*.yaml
+
+# Planning numbers for the pre-run cost estimate only; replaced by observed means once
+# records exist.
+estimate:
+  turns: 15
+  base_prompt_tokens: 5000      # system + tools + question
+  input_tokens_per_turn: 3000   # tool results added each turn
+  output_tokens_per_turn: 2500  # text + thinking + tool calls
+
+system_prompt: |
+  You are a data analyst answering one question about U.S. health care data: CMS Open
+  Payments (payments and other transfers of value from drug and device makers to physicians,
+  non-physician practitioners and teaching hospitals), the NPPES provider registry, and
+  Medicare Part D prescribing. Answer from the data, using only the tools you are given; do
+  not answer from memory.
+
+  How to work:
+  - Find out what the data and its documentation say before you compute: which tables,
+    columns or metrics exist, what they mean, and how they are coded.
+  - When the question leaves a definition open, use the one a domain expert would use, and
+    say which one you chose in the notes of your answer.
+  - Check the result before you submit it: units, orders of magnitude, row counts, and whether
+    the filters match the question.
+  - If something you needed was missing, unclear or wrong in what the tools gave you, call
+    flag_gap with what was missing and your evidence. Flagging does not end the task.
+  - Finish by calling submit_answer once, with the answer in the required shape. Numbers are
+    plain numbers: dollars in US dollars, percents in 0-100 units (12.3 means 12.3%). Report
+    names (companies, hospitals, products, specialties) exactly as they appear in the data;
+    do not paraphrase them or expand abbreviations.
+  - You have at most {max_turns} turns. Nobody will answer questions, so don't ask any.

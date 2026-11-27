@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import shutil
 import sys
 import zipfile
 from datetime import date, datetime, timedelta
@@ -93,6 +94,12 @@ def extract(zip_path: Path, members: dict[str, str]) -> dict[str, Path]:
     if "nppes_npidata" not in found:
         raise RuntimeError(f"{zip_path.name}: no npidata CSV inside")
     return found
+
+
+def remove_raw(zip_path: Path) -> None:
+    """Delete a loaded zip and the folder extract() unpacked it into."""
+    shutil.rmtree(zip_path.with_suffix(""), ignore_errors=True)
+    zip_path.unlink(missing_ok=True)
 
 
 def read_csv_sql() -> str:
@@ -219,6 +226,8 @@ def main(argv: list[str] | None = None) -> int:
             wm.set_(con, SOURCE, "weekly", str(idx["full_date"]), {"from": "full file"})
             con.execute("COMMIT")
             total += n
+            if cfg["nppes"]["delete_raw_after_load"]:
+                remove_raw(z)
         for start, end, name in p["weeklies"]:
             url = base + name
             print(f"downloading {url}")
@@ -227,6 +236,8 @@ def main(argv: list[str] | None = None) -> int:
             wm.set_(con, SOURCE, "weekly", str(end), {"file": name})
             con.execute("COMMIT")
             total += n
+            if cfg["nppes"]["delete_raw_after_load"]:
+                remove_raw(z)
         print(f"done: {total:,} NPI rows written")
         con.close()
     return 0

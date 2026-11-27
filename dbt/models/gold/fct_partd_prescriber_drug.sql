@@ -1,0 +1,25 @@
+-- One row per prescriber NPI x drug (brand name + generic name) x data year.
+select
+    hash(data_year, prscrbr_npi, brnd_name, gnrc_name) as prescriber_drug_id,
+    data_year,
+    make_date(data_year, 1, 1) as data_year_start,
+    prscrbr_npi as npi,
+    prscrbr_last_org_name as prescriber_last_org_name,
+    prscrbr_first_name as prescriber_first_name,
+    prscrbr_city as prescriber_city,
+    prscrbr_state_abrvtn as prescriber_state,
+    prscrbr_type as prescriber_type,
+    prscrbr_type_src as prescriber_type_source,
+    brnd_name as brand_name,
+    gnrc_name as generic_name,
+    tot_clms as total_claims,
+    tot_30day_fills as total_30day_fills,
+    tot_day_suply as total_day_supply,
+    tot_drug_cst as total_drug_cost,
+    tot_benes as total_beneficiaries,
+    ge65_tot_clms as ge65_total_claims,
+    ge65_tot_drug_cst as ge65_total_drug_cost,
+    ge65_tot_benes as ge65_total_beneficiaries,
+    ge65_sprsn_flag as ge65_suppression_flag,
+    ge65_bene_sprsn_flag as ge65_beneficiary_suppression_flag
+from {{ ref('partd_prescriber_drug') }}

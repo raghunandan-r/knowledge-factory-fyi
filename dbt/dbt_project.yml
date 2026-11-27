@@ -1,0 +1,24 @@
+name: kf
+version: "1.0.0"
+config-version: 2
+profile: kf
+
+model-paths: [models]
+macro-paths: [macros]
+test-paths: [tests]
+target-path: target
+clean-targets: [target]
+
+models:
+  kf:
+    # Tables only: agents open the layer read-only without bronze attached.
+    +materialized: table
+    +database: layer
+    silver:
+      +schema: silver
+    gold:
+      +schema: gold
+
+data_tests:
+  kf:
+    +store_failures: false

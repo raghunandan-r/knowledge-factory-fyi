@@ -181,6 +181,15 @@ def test_extract_ignores_unexpected_and_traversal(tmp_path):
     assert not (tmp_path.parent / "evil.csv").exists()
 
 
+def test_remove_raw_deletes_zip_and_extracted_folder(tmp_path):
+    z = tmp_path / "f.zip"
+    with zipfile.ZipFile(z, "w") as zf:
+        zf.writestr("npidata_pfile_a.csv", "NPI\n1\n")
+    nppes.extract(z, {"npidata_pfile": "nppes_npidata"})
+    nppes.remove_raw(z)
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_nppes_weekly_upsert_replaces_npi(cfg, tmp_path):
     members = {"npidata_pfile": "nppes_npidata"}
     cfg["nppes"]["members"] = members

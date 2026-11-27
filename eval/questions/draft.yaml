@@ -216,7 +216,9 @@ questions:
   question: >-
     How many PY2025 general payment records list more than one product?
   answer: {count: int}
-  expert_note: Count records with a non-empty product name in slot 2 or later.
+  expert_note: >-
+    Count records with non-empty product names in at least two of slots 1-5. A name in slot 2+
+    with slot 1 empty is still one product.
   sources: [general]
 
 - id: q015
@@ -345,8 +347,9 @@ questions:
   difficulty: multistep
   traps: [FILES, GRAIN]
   question: >-
-    In PY2025, how much research money was paid directly to physicians, and how much was
-    associated with physicians as principal investigators?
+    In PY2025, how much research money was paid directly to physicians, and how much was paid
+    to other recipients (such as hospitals) on records naming a physician as a principal
+    investigator?
   answer: {direct_usd: number, as_pi_usd: number}
   expert_note: >-
     Direct = the covered recipient is a physician. As PI = records where any of principal
@@ -489,7 +492,7 @@ questions:
   traps: [TIME]
   question: >-
     Which month of 2024 had the highest total general payment dollars to physicians?
-  answer: {month: str, usd: number}
+  answer: {month_number: int, usd: number}
   expert_note: Group by month of Date_of_Payment within PY2024.
   sources: [general]
 
@@ -544,9 +547,10 @@ questions:
   split: dev
   persona: journalist
   difficulty: multistep
-  traps: [PAGE, GRAIN]
+  traps: [GRAIN]  # was [PAGE, GRAIN]; PAGE dropped (PLAN §7)
   question: >-
-    How many physicians in California received more than $10,000 in total general payments in PY2025?
+    How many physicians received more than $10,000 in total PY2025 general payments on records
+    listing a California address?
   answer: {count: int}
   expert_note: >-
     Needs a per-physician total over millions of records. Through the API (500 rows per page)
@@ -558,10 +562,10 @@ questions:
   split: dev
   persona: policy
   difficulty: multistep
-  traps: [PAGE, TAXON]
+  traps: [TAXON]  # was [PAGE, TAXON]; PAGE dropped (PLAN §7)
   question: >-
-    How many active NPIs in NPPES have interventional cardiology as their primary taxonomy, and
-    how many of them received any PY2025 general payment?
+    How many active individual-provider NPIs in NPPES have interventional cardiology as their
+    primary taxonomy, and how many of them received any PY2025 general payment?
   answer: {npis: int, paid: int}
   expert_note: >-
     Primary taxonomy 207RI0011X, from the NPPES bulk file, excluding deactivated NPIs. The NPPES
@@ -573,7 +577,7 @@ questions:
   split: dev
   persona: coi
   difficulty: filtered
-  traps: [PAGE, ENTITY]
+  traps: [ENTITY]  # was [PAGE, ENTITY]; PAGE dropped (PLAN §7). 254 rows > the 200-row tool cap
   question: >-
     List every company that made a general payment to a physician in Vermont in PY2025, with
     each company's total.
@@ -699,8 +703,8 @@ questions:
   difficulty: multistep
   traps: [GRAIN, ENTITY]
   question: >-
-    In PY2025, how many physicians were paid by a single company for 25 or more speaker
-    engagements?
+    In PY2025, how many physicians were paid by a single company for 25 or more talks at
+    company-run speaker programs (not accredited or certified continuing-education programs)?
   answer: {count: int}
   expert_note: >-
     Speaker engagement = Nature_of_Payment 'Compensation for services other than consulting,
@@ -762,7 +766,7 @@ questions:
   traps: [ENTITY, TIME]
   question: >-
     How many PY2025 general payment records went to an NPI that NPPES shows as deactivated
-    on the payment date, and what were they worth?
+    before the payment date (and not reactivated by then), and what were they worth?
   answer: {records: int, usd: number}
   expert_note: >-
     Join Covered_Recipient_NPI to NPPES. Deactivated on the payment date = NPI Deactivation

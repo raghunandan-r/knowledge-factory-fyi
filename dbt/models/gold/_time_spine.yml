@@ -1,0 +1,11 @@
+version: 2
+
+models:
+  - name: metricflow_time_spine
+    description: One row per calendar day, 2013-01-01 through 2030-12-31. MetricFlow's time spine.
+    time_spine:
+      standard_granularity_column: date_day
+    columns:
+      - name: date_day
+        description: Calendar date.
+        granularity: day

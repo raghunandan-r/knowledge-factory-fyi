@@ -1,0 +1,8 @@
+# Phase 2 feasibility pilot (PLAN.md §4). No question needs a seed, so the starter can't fail
+# for lack of a list only the eval owns.
+# Base 12: dev drafts, at least one per trap, no REPUB.
+# Added 8 (2026-11-26, after the smoke pilot read "too easy"): every dev draft tagged
+# multistep that needs no seed and isn't REPUB. Chosen by that rule alone, before any run.
+pilot_id: pilot-v1
+questions: [q002, q004, q012, q013, q018, q019, q024, q026, q029, q035, q046, q064,
+            q003, q025, q040, q041, q051, q055, q059, q062]

@@ -1,0 +1,551 @@
+version: 2
+
+# Open Payments (CMS). Source: "Open Payments Public Use Files: Methodology Overview & Data
+# Dictionary", January 2026 (data/docs/text/op_methodology_data_dictionary.md).
+
+semantic_models:
+  - name: general_payments
+    description: >
+      Open Payments General Payments: payments or other transfers of value made by applicable
+      manufacturers and applicable GPOs to covered recipients (physicians, non-physician
+      practitioners, teaching hospitals) that are NOT in connection with a research agreement
+      or research protocol. One row per published record (Record_ID); a record is the total
+      value given to one recipient for one date, and may bundle several discrete payments
+      (number_of_payments). Program years 2023-2025 from the June 2026 publication.
+    model: ref('fct_general_payments')
+    defaults:
+      agg_time_dimension: program_year
+    entities:
+      - name: general_payment
+        type: primary
+        expr: record_id
+        description: Record_ID, the system-assigned identifier of the general payment record.
+      - name: provider
+        type: foreign
+        expr: covered_recipient_npi
+        description: >
+          Covered_Recipient_NPI, the recipient physician's or NPP's own NPI (not a group NPI).
+          Joins to the NPPES provider record. Empty for teaching hospitals and for some
+          individual records submitted without an NPI.
+      - name: covered_recipient
+        type: foreign
+        expr: covered_recipient_profile_id
+        description: >
+          Covered_Recipient_Profile_ID, Open Payments' unique, stable identifier for a physician
+          or NPP; links the same person across program years. Empty for teaching hospitals.
+      - name: teaching_hospital
+        type: foreign
+        expr: teaching_hospital_id
+        description: Teaching_Hospital_ID, system-generated identifier of the teaching hospital recipient.
+      - name: manufacturer
+        type: foreign
+        expr: manufacturer_id
+        description: >
+          Applicable_Manufacturer_or_Applicable_GPO_Making_Payment_ID, identifier of the company
+          (applicable manufacturer or group purchasing organization) that made the payment.
+    dimensions:
+      - name: program_year
+        type: time
+        expr: program_year_start
+        type_params:
+          time_granularity: year
+        description: >
+          Program_Year, the year in which the payment occurred as reported by the submitting
+          entity (January 1 of that year). CMS publishes and totals Open Payments by program
+          year; this is the default time for every general payment measure.
+      - name: payment_date
+        type: time
+        type_params:
+          time_granularity: day
+        description: >
+          Date_of_Payment. For a single payment, the date it was issued; for a series or an
+          aggregated set of payments, the date of the first payment in the program year.
+          A few records carry implausible dates as submitted.
+      - name: recipient_type
+        type: categorical
+        description: >
+          Covered_Recipient_Type: 'Covered Recipient Physician', 'Covered Recipient
+          Non-Physician Practitioner' (physician assistants, nurse practitioners, clinical nurse
+          specialists, CRNAs, anesthesiologist assistants, certified nurse midwives; reportable
+          since PY2021) or 'Covered Recipient Teaching Hospital'.
+      - name: recipient_first_name
+        type: categorical
+        description: Covered_Recipient_First_Name as reported by the submitting entity (individuals only).
+      - name: recipient_last_name
+        type: categorical
+        description: Covered_Recipient_Last_Name as reported by the submitting entity (individuals only).
+      - name: teaching_hospital_name
+        type: categorical
+        description: Teaching_Hospital_Name as listed on CMS's teaching hospital list.
+      - name: recipient_city
+        type: categorical
+        description: Recipient_City, city of the recipient's primary practice/business address.
+      - name: recipient_state
+        type: categorical
+        description: Recipient_State, two-letter state/territory of the recipient's primary practice/business address (US addresses only).
+      - name: recipient_zip5
+        type: categorical
+        description: First five digits of Recipient_Zip_Code (primary practice/business location).
+      - name: recipient_primary_type
+        type: categorical
+        description: >
+          Covered_Recipient_Primary_Type_1, the primary type of medicine practiced, e.g.
+          'Medical Doctor', 'Doctor of Osteopathy', 'Physician Assistant', 'Nurse Practitioner'.
+      - name: recipient_specialty
+        type: categorical
+        description: >
+          Covered_Recipient_Specialty_1, specialty from the standardized provider taxonomy list,
+          written as a pipe-separated path, e.g. 'Allopathic & Osteopathic Physicians|Internal Medicine|Cardiovascular Disease'.
+      - name: manufacturer_name
+        type: categorical
+        description: >
+          Applicable_Manufacturer_or_Applicable_GPO_Making_Payment_Name, the company that made
+          the payment, as named on the record.
+      - name: manufacturer_state
+        type: categorical
+        description: State of the applicable manufacturer or GPO making the payment.
+      - name: manufacturer_country
+        type: categorical
+        description: Country of the applicable manufacturer or GPO making the payment.
+      - name: submitting_entity_name
+        type: categorical
+        description: >
+          Submitting_Applicable_Manufacturer_or_Applicable_GPO_Name, the entity that submitted
+          the record (can differ from the company making the payment).
+      - name: nature_of_payment
+        type: categorical
+        description: >
+          Nature_of_Payment_or_Transfer_of_Value, e.g. 'Food and Beverage', 'Travel and
+          Lodging', 'Consulting Fee', 'Compensation for services other than consulting...',
+          'Education', 'Gift', 'Honoraria', 'Royalty or License', 'Grant', 'Entertainment',
+          'Charitable Contribution', 'Debt forgiveness', 'Acquisitions'.
+      - name: form_of_payment
+        type: categorical
+        description: >
+          Form_of_Payment_or_Transfer_of_Value, e.g. 'Cash or cash equivalent', 'In-kind items
+          and services', 'Stock', 'Stock option', 'Dividend, profit or other return on investment'.
+      - name: state_of_travel
+        type: categorical
+        description: For 'Travel and Lodging' payments, the destination state.
+      - name: country_of_travel
+        type: categorical
+        description: For 'Travel and Lodging' payments, the destination country.
+      - name: physician_ownership_indicator
+        type: categorical
+        description: >
+          Physician_Ownership_Indicator: whether the physician holds an ownership or investment
+          interest in the paying manufacturer (the physician only, not family members).
+      - name: third_party_payment_recipient_indicator
+        type: categorical
+        description: >
+          Third_Party_Payment_Recipient_Indicator: whether the payment went to a third-party
+          entity or individual at the request of or on behalf of the covered recipient.
+      - name: third_party_entity_name
+        type: categorical
+        description: Name of the third-party entity that received the payment, when there is one.
+      - name: charity_indicator
+        type: categorical
+        description: Charity_Indicator, whether the third party that received the payment is a charity.
+      - name: dispute_status
+        type: categorical
+        description: >
+          Dispute_Status_for_Publication: 'Yes' if the record is published as disputed by the
+          covered recipient (dispute not resolved by the end of the correction period), else 'No'.
+      - name: delay_in_publication_indicator
+        type: categorical
+        description: Whether the submitter requested a delay in publication for this record.
+      - name: related_product_indicator
+        type: categorical
+        description: Related_Product_Indicator, whether the payment relates to one or more drugs, devices, biologicals or medical supplies.
+      - name: product_1_covered_indicator
+        type: categorical
+        description: Covered_or_Noncovered_Indicator_1, whether the first listed product is a covered product under the Open Payments rule.
+      - name: product_1_type
+        type: categorical
+        description: Indicate_Drug_or_Biological_or_Device_or_Medical_Supply_1 for the first listed product (Drug, Biological, Device, Medical Supply).
+      - name: product_1_category
+        type: categorical
+        description: Product_Category_or_Therapeutic_Area_1 for the first listed product, e.g. 'Endocrinology'.
+      - name: product_1_name
+        type: categorical
+        description: >
+          Name_of_Drug_or_Biological_or_Device_or_Medical_Supply_1, the marketed name of the
+          first listed product. A record can list up to five products; products 2-5 are in
+          silver.op_general_payments.
+      - name: product_1_ndc
+        type: categorical
+        description: Associated_Drug_or_Biological_NDC_1, National Drug Code of the first listed product, if any.
+      - name: change_type
+        type: categorical
+        description: >
+          Change_Type versus the previous publication: NEW (first published, submitted in the
+          latest window), ADD (submitted earlier, first eligible now), CHANGED (modified since
+          last publication), UNCHANGED.
+    measures:
+      - name: general_payment_amount
+        agg: sum
+        expr: amount_usd
+        description: >
+          Total_Amount_of_Payment_USDollars summed: U.S. dollar value of payments or other
+          transfers of value (the manufacturer converts to dollars if needed).
+      - name: general_payment_records
+        agg: sum
+        expr: "1"
+        description: Number of general payment records (Record_IDs). This is the "payment count" CMS uses in its published totals.
+      - name: general_payment_discrete_payments
+        agg: sum
+        expr: number_of_payments
+        description: >
+          Number_of_Payments_Included_in_Total_Amount summed: discrete payments bundled into
+          the records. Not the count CMS reports as total payments.
+      - name: general_payment_recipients
+        agg: count_distinct
+        expr: covered_recipient_profile_id
+        description: Distinct physicians and NPPs (by Covered_Recipient_Profile_ID) receiving general payments. Teaching hospitals are not counted.
+      - name: general_payment_teaching_hospitals
+        agg: count_distinct
+        expr: teaching_hospital_id
+        description: Distinct teaching hospitals receiving general payments.
+      - name: general_payment_manufacturers
+        agg: count_distinct
+        expr: manufacturer_id
+        description: Distinct applicable manufacturers/GPOs making general payments.
+
+  - name: research_payments
+    description: >
+      Open Payments Research Payments: payments or other transfers of value made in connection
+      with a research agreement or research protocol. One row per published record
+      (Record_ID). The recipient may be a covered physician/NPP, a teaching hospital, or a
+      non-covered entity or individual (e.g. a research institution); up to five principal
+      investigators may be named on a record. Program years 2023-2025.
+    model: ref('fct_research_payments')
+    defaults:
+      agg_time_dimension: program_year
+    entities:
+      - name: research_payment
+        type: primary
+        expr: record_id
+        description: Record_ID of the research payment record.
+      - name: provider
+        type: foreign
+        expr: covered_recipient_npi
+        description: Covered_Recipient_NPI when the recipient is a physician or NPP; joins to the NPPES provider record.
+      - name: covered_recipient
+        type: foreign
+        expr: covered_recipient_profile_id
+        description: Covered_Recipient_Profile_ID of the physician or NPP recipient, stable across program years.
+      - name: teaching_hospital
+        type: foreign
+        expr: teaching_hospital_id
+        description: Teaching_Hospital_ID when the recipient is a teaching hospital.
+      - name: manufacturer
+        type: foreign
+        expr: manufacturer_id
+        description: Identifier of the applicable manufacturer or GPO making the payment.
+    dimensions:
+      - name: program_year
+        type: time
+        expr: program_year_start
+        type_params:
+          time_granularity: year
+        description: Program_Year in which the payment occurred (January 1 of that year). Default time for research measures.
+      - name: payment_date
+        type: time
+        type_params:
+          time_granularity: day
+        description: Date_of_Payment (first payment date for a series or aggregated set).
+      - name: recipient_type
+        type: categorical
+        description: >
+          Covered_Recipient_Type: 'Covered Recipient Physician', 'Covered Recipient
+          Non-Physician Practitioner', 'Covered Recipient Teaching Hospital', 'Non-covered
+          Recipient Entity' or 'Non-covered Recipient Individual'.
+      - name: noncovered_recipient_entity_name
+        type: categorical
+        description: Noncovered_Recipient_Entity_Name, the non-covered entity receiving the payment.
+      - name: recipient_first_name
+        type: categorical
+        description: Covered recipient's first name as reported.
+      - name: recipient_last_name
+        type: categorical
+        description: Covered recipient's last name as reported.
+      - name: teaching_hospital_name
+        type: categorical
+        description: Teaching hospital name per CMS's teaching hospital list.
+      - name: recipient_city
+        type: categorical
+        description: Recipient's primary business city.
+      - name: recipient_state
+        type: categorical
+        description: Recipient's primary business state (US).
+      - name: recipient_primary_type
+        type: categorical
+        description: Covered_Recipient_Primary_Type_1 of a physician/NPP recipient.
+      - name: recipient_specialty
+        type: categorical
+        description: Covered_Recipient_Specialty_1 of a physician/NPP recipient (taxonomy path).
+      - name: pi_1_npi
+        type: categorical
+        description: NPI of the first principal investigator named on the record (Principal_Investigator_1_NPI).
+      - name: pi_1_profile_id
+        type: categorical
+        description: Open Payments profile ID of the first principal investigator.
+      - name: pi_1_last_name
+        type: categorical
+        description: Last name of the first principal investigator.
+      - name: pi_1_state
+        type: categorical
+        description: State of the first principal investigator's business address.
+      - name: pi_1_specialty
+        type: categorical
+        description: Specialty (taxonomy path) of the first principal investigator.
+      - name: manufacturer_name
+        type: categorical
+        description: Applicable manufacturer or GPO making the payment, as named on the record.
+      - name: submitting_entity_name
+        type: categorical
+        description: Entity that submitted the record.
+      - name: form_of_payment
+        type: categorical
+        description: Form_of_Payment_or_Transfer_of_Value.
+      - name: expenditure_category
+        type: categorical
+        description: Expenditure_Category1, contextual category of the research payment (e.g. 'Patient Care').
+      - name: preclinical_research_indicator
+        type: categorical
+        description: Preclinical_Research_Indicator, whether the payment relates to pre-clinical research.
+      - name: delay_in_publication_indicator
+        type: categorical
+        description: >
+          Whether the submitter requested a delay in publication (allowed for research on new
+          products, up to four years from the payment's program year).
+      - name: dispute_status
+        type: categorical
+        description: Dispute_Status_for_Publication ('Yes' = published as disputed).
+      - name: name_of_study
+        type: categorical
+        description: Name_of_Study, the study the payment is for.
+      - name: clinicaltrials_gov_identifier
+        type: categorical
+        description: ClinicalTrials_Gov_Identifier (NCT number) if the study is registered.
+      - name: related_product_indicator
+        type: categorical
+        description: Whether the payment relates to one or more products.
+      - name: product_1_type
+        type: categorical
+        description: Type of the first listed product (Drug, Biological, Device, Medical Supply).
+      - name: product_1_category
+        type: categorical
+        description: Product category or therapeutic area of the first listed product.
+      - name: product_1_name
+        type: categorical
+        description: Marketed name of the first listed product (products 2-5 are in silver.op_research_payments).
+      - name: change_type
+        type: categorical
+        description: Change_Type versus the previous publication (NEW, ADD, CHANGED, UNCHANGED).
+    measures:
+      - name: research_payment_amount
+        agg: sum
+        expr: amount_usd
+        description: Total_Amount_of_Payment_USDollars summed over research payment records.
+      - name: research_payment_records
+        agg: sum
+        expr: "1"
+        description: Number of research payment records (Record_IDs), the payment count CMS reports.
+      - name: research_payment_recipients
+        agg: count_distinct
+        expr: covered_recipient_profile_id
+        description: Distinct physician/NPP recipients (by profile ID). Excludes teaching hospitals and non-covered recipients.
+      - name: research_payment_teaching_hospitals
+        agg: count_distinct
+        expr: teaching_hospital_id
+        description: Distinct teaching hospitals receiving research payments.
+      - name: research_payment_manufacturers
+        agg: count_distinct
+        expr: manufacturer_id
+        description: Distinct applicable manufacturers/GPOs making research payments.
+
+  - name: ownership_interests
+    description: >
+      Open Payments Physician Ownership or Investment Interest: ownership or investment
+      interests held by physicians, or their immediate family members, in an applicable
+      manufacturer or applicable GPO during the program year. One row per published record.
+      Not part of CMS's general/research payment totals.
+    model: ref('fct_ownership_interests')
+    defaults:
+      agg_time_dimension: program_year
+    entities:
+      - name: ownership_interest
+        type: primary
+        expr: record_id
+        description: Record_ID of the ownership record.
+      - name: provider
+        type: foreign
+        expr: physician_npi
+        description: Physician_NPI of the physician holding (or whose family member holds) the interest.
+      - name: covered_recipient
+        type: foreign
+        expr: physician_profile_id
+        description: Physician_Profile_ID, Open Payments' identifier for the physician.
+      - name: manufacturer
+        type: foreign
+        expr: manufacturer_id
+        description: Applicable manufacturer or GPO in which the interest is held.
+    dimensions:
+      - name: program_year
+        type: time
+        expr: program_year_start
+        type_params:
+          time_granularity: year
+        description: Program_Year in which the ownership/investment interest was held (January 1 of that year).
+      - name: interest_held_by
+        type: categorical
+        description: Interest_Held_by_Physician_or_an_Immediate_Family_Member ('Physician Covered Recipient' or 'Immediate family member').
+      - name: physician_last_name
+        type: categorical
+        description: Physician's last name.
+      - name: physician_first_name
+        type: categorical
+        description: Physician's first name.
+      - name: recipient_state
+        type: categorical
+        description: State of the physician's primary business address.
+      - name: physician_primary_type
+        type: categorical
+        description: Physician_Primary_Type, primary type of medicine practiced.
+      - name: physician_specialty
+        type: categorical
+        description: Physician_Specialty (taxonomy path).
+      - name: manufacturer_name
+        type: categorical
+        description: Applicable manufacturer or GPO in which the interest is held.
+      - name: terms_of_interest
+        type: categorical
+        description: Terms_of_Interest, free-text description of the terms.
+      - name: dispute_status
+        type: categorical
+        description: Whether the record is published as disputed.
+    measures:
+      - name: ownership_amount_invested
+        agg: sum
+        expr: amount_invested_usd
+        description: Total_Amount_Invested_USDollars, dollars the physician or family member invested in the company during the program year.
+      - name: ownership_value_of_interest
+        agg: sum
+        expr: value_of_interest_usd
+        description: Value_of_Interest, cumulative dollar value of the ownership or investment interest held.
+      - name: ownership_records
+        agg: sum
+        expr: "1"
+        description: Number of ownership/investment interest records.
+      - name: ownership_physicians
+        agg: count_distinct
+        expr: physician_profile_id
+        description: Distinct physicians (by profile ID) with a reported ownership or investment interest.
+
+metrics:
+  - name: general_payment_amount
+    label: General payments ($)
+    description: >
+      Total U.S. dollar value of Open Payments general payments (not research-related). Group
+      by general_payment__recipient_type to split physicians, NPPs and teaching hospitals;
+      CMS's national totals are by program year.
+    type: simple
+    type_params:
+      measure: general_payment_amount
+  - name: general_payment_count
+    label: General payment records
+    description: >
+      Number of general payment records. Matches the "total payment count" CMS publishes.
+      Each record may bundle several discrete payments (see general_payment_discrete_count).
+    type: simple
+    type_params:
+      measure: general_payment_records
+  - name: general_payment_discrete_count
+    label: Discrete general payments
+    description: Sum of Number_of_Payments_Included_in_Total_Amount across general payment records.
+    type: simple
+    type_params:
+      measure: general_payment_discrete_payments
+  - name: general_payment_recipient_count
+    label: Physicians/NPPs paid (general)
+    description: Distinct physicians and non-physician practitioners receiving at least one general payment.
+    type: simple
+    type_params:
+      measure: general_payment_recipients
+  - name: general_payment_teaching_hospital_count
+    label: Teaching hospitals paid (general)
+    description: Distinct teaching hospitals receiving at least one general payment.
+    type: simple
+    type_params:
+      measure: general_payment_teaching_hospitals
+  - name: general_payment_manufacturer_count
+    label: Paying companies (general)
+    description: Distinct applicable manufacturers/GPOs making at least one general payment.
+    type: simple
+    type_params:
+      measure: general_payment_manufacturers
+  - name: general_payment_avg_amount
+    label: Average general payment record ($)
+    description: General payment dollars divided by general payment records (mean value per record).
+    type: ratio
+    type_params:
+      numerator: general_payment_amount
+      denominator: general_payment_count
+  - name: research_payment_amount
+    label: Research payments ($)
+    description: >
+      Total U.S. dollar value of Open Payments research payments, across all recipient types
+      (including teaching hospitals and non-covered entities) unless filtered by
+      research_payment__recipient_type.
+    type: simple
+    type_params:
+      measure: research_payment_amount
+  - name: research_payment_count
+    label: Research payment records
+    description: Number of research payment records (the count CMS publishes).
+    type: simple
+    type_params:
+      measure: research_payment_records
+  - name: research_payment_recipient_count
+    label: Physicians/NPPs paid (research)
+    description: Distinct physician/NPP recipients of research payments (by profile ID).
+    type: simple
+    type_params:
+      measure: research_payment_recipients
+  - name: research_payment_teaching_hospital_count
+    label: Teaching hospitals paid (research)
+    description: Distinct teaching hospitals receiving research payments.
+    type: simple
+    type_params:
+      measure: research_payment_teaching_hospitals
+  - name: research_payment_manufacturer_count
+    label: Paying companies (research)
+    description: Distinct applicable manufacturers/GPOs making research payments.
+    type: simple
+    type_params:
+      measure: research_payment_manufacturers
+  - name: ownership_amount_invested
+    label: Amount invested ($)
+    description: Dollars invested by physicians or their immediate family members in applicable manufacturers/GPOs.
+    type: simple
+    type_params:
+      measure: ownership_amount_invested
+  - name: ownership_value_of_interest
+    label: Value of ownership interest ($)
+    description: Cumulative dollar value of physicians' (or family members') ownership or investment interests.
+    type: simple
+    type_params:
+      measure: ownership_value_of_interest
+  - name: ownership_record_count
+    label: Ownership records
+    description: Number of physician ownership/investment interest records.
+    type: simple
+    type_params:
+      measure: ownership_records
+  - name: ownership_physician_count
+    label: Physicians with ownership interests
+    description: Distinct physicians with a reported ownership or investment interest.
+    type: simple
+    type_params:
+      measure: ownership_physicians
